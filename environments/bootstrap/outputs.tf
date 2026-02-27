@@ -17,3 +17,19 @@ output "dynamodb_table_name" {
   description = "DynamoDB 잠금 테이블 이름 (backend dynamodb_table에 사용)"
   value       = module.tfstate.dynamodb_table_name
 }
+
+# =============================================================================
+# GitHub Actions OIDC
+# =============================================================================
+output "oidc_provider_arn" {
+  description = "GitHub Actions OIDC Provider ARN"
+  value       = aws_iam_openid_connect_provider.github.arn
+}
+
+output "github_actions_role_arns" {
+  description = "환경별 GitHub Actions IAM 역할 ARN"
+  value = {
+    for env in local.environments :
+    env => aws_iam_role.github_actions[env].arn
+  }
+}
