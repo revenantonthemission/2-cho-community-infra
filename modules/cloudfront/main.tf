@@ -27,7 +27,8 @@ resource "aws_cloudfront_function" "url_rewrite" {
         '/detail':       '/post_detail.html',
         '/edit':         '/post_edit.html',
         '/password':     '/user_password.html',
-        '/edit-profile': '/user_edit.html'
+        '/edit-profile': '/user_edit.html',
+        '/find-account': '/user_find_account.html'
       };
 
       if (routes.hasOwnProperty(uri)) {
