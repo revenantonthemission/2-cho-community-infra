@@ -78,7 +78,8 @@ resource "aws_iam_policy" "lambda_ssm" {
       {
         Effect = "Allow"
         Action = [
-          "ssm:GetParameter"
+          "ssm:GetParameter",
+          "ssm:GetParameters"
         ]
         Resource = [
           aws_ssm_parameter.db_password.arn,
