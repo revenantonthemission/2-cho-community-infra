@@ -28,12 +28,6 @@ variable "engine_version" {
   default     = "8.0"
 }
 
-variable "parameter_group_family" {
-  description = "DB 파라미터 그룹 패밀리"
-  type        = string
-  default     = "mysql8.0"
-}
-
 variable "instance_class" {
   description = "DB 인스턴스 클래스"
   type        = string

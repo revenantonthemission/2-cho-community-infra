@@ -354,17 +354,26 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         ]
       },
       {
-        # IAM 정책 관리 (프로젝트 범위) + 계정 수준 설정
-        Sid    = "IAMPoliciesAndAccountSettings"
+        # IAM 정책 관리 (프로젝트 범위로 제한 — 권한 상승 방지)
+        Sid    = "IAMPolicies"
         Effect = "Allow"
         Action = [
           "iam:GetPolicy", "iam:CreatePolicy", "iam:DeletePolicy",
           "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
-          "iam:ListPolicyVersions",
+          "iam:ListPolicyVersions"
+        ]
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project}-*"
+        ]
+      },
+      {
+        # IAM 글로벌 읽기 + 서비스 연결 역할 생성
+        Sid    = "IAMGlobalAndServiceLinkedRole"
+        Effect = "Allow"
+        Action = [
           "iam:ListInstanceProfiles",
           "iam:CreateServiceLinkedRole",
-          "iam:GetAccountPasswordPolicy", "iam:UpdateAccountPasswordPolicy",
-          "iam:DeleteAccountPasswordPolicy"
+          "iam:GetAccountPasswordPolicy"
         ]
         Resource = "*"
       },

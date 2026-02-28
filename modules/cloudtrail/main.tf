@@ -54,7 +54,7 @@ resource "aws_cloudtrail" "this" {
   name                          = "${var.project}-${var.environment}-trail"
   s3_bucket_name                = var.cloudtrail_s3_bucket_id
   include_global_service_events = true
-  is_multi_region_trail         = false
+  is_multi_region_trail         = true
   enable_logging                = true
 
   # 자체 생성한 CloudTrail 전용 로그 그룹 사용

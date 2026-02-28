@@ -154,17 +154,17 @@ resource "aws_cloudfront_distribution" "frontend" {
     minimum_protocol_version = "TLSv1.2_2021"
   }
 
-  # 커스텀 에러 페이지: SPA 라우팅 대신 로그인 페이지로 안내
+  # 커스텀 에러 페이지: 원래 에러 코드 유지 (200 변환 시 실제 에러가 은폐됨)
   custom_error_response {
     error_code            = 404
-    response_code         = 200
+    response_code         = 404
     response_page_path    = "/${var.default_root_object}"
     error_caching_min_ttl = 10
   }
 
   custom_error_response {
     error_code            = 403
-    response_code         = 200
+    response_code         = 403
     response_page_path    = "/${var.default_root_object}"
     error_caching_min_ttl = 10
   }

@@ -43,6 +43,8 @@ rds_deletion_protection   = false
 # secret_key  = "change-me"
 
 # Lambda (staging: 중간 사양)
+# CD 워크플로우(deploy-backend.yml)에서 sha-<commit> 태그로 업데이트
+# terraform apply 시 이 값이 아닌 CD에서 설정한 이미지가 사용됨
 lambda_image_tag               = "latest"
 lambda_memory_size             = 512
 lambda_timeout                 = 30

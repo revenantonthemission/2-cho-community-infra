@@ -134,6 +134,9 @@ resource "aws_lambda_function" "backend" {
   package_type = "Image"
   image_uri    = var.ecr_image_uri
 
+  # Provisioned Concurrency가 $LATEST 대신 실제 버전을 참조하도록 게시
+  publish = true
+
   memory_size = var.memory_size
   timeout     = var.timeout
 

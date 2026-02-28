@@ -3,6 +3,11 @@
 # MySQL 데이터베이스 (프라이빗 서브넷)
 ###############################################################################
 
+# engine_version에서 parameter_group_family를 자동 도출 (불일치 방지)
+locals {
+  parameter_group_family = "mysql${var.engine_version}"
+}
+
 # DB 서브넷 그룹 (Multi-AZ 배치)
 resource "aws_db_subnet_group" "this" {
   name       = "${var.project}-${var.environment}-db-subnet"
@@ -16,7 +21,7 @@ resource "aws_db_subnet_group" "this" {
 # DB 파라미터 그룹 (MySQL 설정 커스터마이징)
 resource "aws_db_parameter_group" "this" {
   name   = "${var.project}-${var.environment}-mysql-params"
-  family = var.parameter_group_family
+  family = local.parameter_group_family
 
   # READ COMMITTED 격리 수준 (애플리케이션과 일치)
   parameter {

@@ -26,7 +26,7 @@ data "aws_ami" "amazon_linux" {
 
 # SSH 키페어 (공개키를 변수로 전달)
 resource "aws_key_pair" "bastion" {
-  count = var.ssh_public_key != "" ? 1 : 0
+  count = var.create_bastion && var.ssh_public_key != "" ? 1 : 0
 
   key_name   = "${var.project}-${var.environment}-bastion-key"
   public_key = var.ssh_public_key
@@ -36,6 +36,8 @@ resource "aws_key_pair" "bastion" {
 
 # Bastion EC2 인스턴스
 resource "aws_instance" "bastion" {
+  count = var.create_bastion ? 1 : 0
+
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
   subnet_id              = var.public_subnet_id
@@ -62,7 +64,9 @@ resource "aws_instance" "bastion" {
 
 # Elastic IP
 resource "aws_eip" "bastion" {
-  instance = aws_instance.bastion.id
+  count = var.create_bastion ? 1 : 0
+
+  instance = aws_instance.bastion[0].id
   domain   = "vpc"
 
   tags = merge(var.tags, {

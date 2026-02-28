@@ -18,7 +18,7 @@ single_nat_gateway = true # dev: NAT GW 1개 (~$32/month 고정 비용 주의)
 
 # Bastion SSH 허용 IP (본인 IP로 변경 필요)
 # 예: bastion_allowed_cidrs = ["203.0.113.0/32"]
-bastion_allowed_cidrs = ["118.218.200.33/32"]
+bastion_allowed_cidrs = []  # -var 플래그 또는 secret.tfvars로 설정
 
 # S3
 # allow_credentials=true 시 와일드카드 불가
@@ -46,6 +46,8 @@ rds_deletion_protection   = false
 # secret_key  = "change-me"
 
 # Lambda (Free Tier: 1M 요청, 400K GB-초)
+# CD 워크플로우(deploy-backend.yml)에서 sha-<commit> 태그로 업데이트
+# terraform apply 시 이 값이 아닌 CD에서 설정한 이미지가 사용됨
 lambda_image_tag               = "latest"
 lambda_memory_size             = 256 # 최소로 유지하여 GB-초 절약
 lambda_timeout                 = 30
@@ -54,7 +56,7 @@ lambda_log_retention_days      = 7
 
 # EC2 (Free Tier: t2.micro 또는 t3.micro, 750시간/월)
 bastion_instance_type  = "t3.micro" # t4g는 Free Tier 아님!
-bastion_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFo48LaIfVIgrKfVw5Cjt4LqQVpFWp4FWGH9T/Eo8sEu corpseonthemission@icloud.com"
+bastion_ssh_public_key = ""  # -var 플래그 또는 secret.tfvars로 설정
 
 # CloudWatch (Free Tier: 10 알람, 5GB 로그)
 cloudwatch_log_retention_days = 7

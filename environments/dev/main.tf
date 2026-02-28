@@ -140,9 +140,8 @@ module "rds" {
   private_subnet_ids    = module.vpc.private_subnet_ids
   rds_security_group_id = module.vpc.rds_security_group_id
 
-  engine_version         = var.rds_engine_version
-  parameter_group_family = var.rds_parameter_group_family
-  instance_class         = var.rds_instance_class
+  engine_version = var.rds_engine_version
+  instance_class = var.rds_instance_class
   allocated_storage      = var.rds_allocated_storage
   max_allocated_storage  = var.rds_max_allocated_storage
 
@@ -273,6 +272,7 @@ module "cloudtrail" {
   environment = var.environment
 
   cloudtrail_s3_bucket_id = module.s3.cloudtrail_logs_bucket_id
+  log_retention_days      = var.cloudtrail_log_retention_days
 
   tags = local.common_tags
 }

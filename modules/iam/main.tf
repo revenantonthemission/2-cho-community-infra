@@ -222,11 +222,13 @@ resource "aws_iam_role" "terraform_deployer" {
   tags = var.tags
 }
 
+# PowerUserAccess: IAM 관리 제외 전체 서비스 접근 (AdministratorAccess 대체)
+# IAM 권한은 bootstrap OIDC 역할에서 프로젝트 범위로 제한하여 관리
 resource "aws_iam_role_policy_attachment" "terraform_deployer" {
   count = var.create_deployer_role ? 1 : 0
 
   role       = aws_iam_role.terraform_deployer[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+  policy_arn = "arn:aws:iam::aws:policy/PowerUserAccess"
 }
 
 # -----------------------------------------------------------------------------

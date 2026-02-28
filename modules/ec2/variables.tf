@@ -34,6 +34,12 @@ variable "ssh_public_key" {
   default     = ""
 }
 
+variable "create_bastion" {
+  description = "배스천 호스트 생성 여부"
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "공통 태그"
   type        = map(string)

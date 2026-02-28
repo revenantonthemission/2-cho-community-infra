@@ -105,12 +105,6 @@ variable "rds_engine_version" {
   default     = "8.0"
 }
 
-variable "rds_parameter_group_family" {
-  description = "DB 파라미터 그룹 패밀리"
-  type        = string
-  default     = "mysql8.0"
-}
-
 variable "rds_instance_class" {
   description = "DB 인스턴스 클래스"
   type        = string
