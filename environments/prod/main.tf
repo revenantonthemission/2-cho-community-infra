@@ -89,7 +89,6 @@ module "s3" {
   project     = var.project
   environment = var.environment
 
-  cors_allowed_origins          = var.cors_allowed_origins
   cloudtrail_log_retention_days = var.cloudtrail_log_retention_days
 
   tags = local.common_tags

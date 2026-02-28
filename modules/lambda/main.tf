@@ -67,6 +67,8 @@ resource "aws_iam_role_policy_attachment" "lambda_efs" {
 }
 
 # SSM Parameter Store 접근 권한 (시크릿 조회)
+# ssm:GetParameter + WithDecryption=True는 기본 aws/ssm 키 사용 시
+# 별도 kms:Decrypt 권한 불필요. CMK 전환 시 kms:Decrypt 추가 필요
 resource "aws_iam_policy" "lambda_ssm" {
   name = "${var.project}-${var.environment}-lambda-ssm"
 

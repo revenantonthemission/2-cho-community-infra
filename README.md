@@ -549,6 +549,11 @@ terraform destroy \
   - Lambda 시크릿: 평문 환경변수(`DB_PASSWORD`, `SECRET_KEY`) → SSM Parameter Store SecureString
   - OIDC IAM: AdministratorAccess → 서비스별 스코프 IAM 정책 (최소 권한)
 
+- **02-28: 코드 리뷰 기반 인프라 정리**
+  - OIDC IAM: `iam:CreateRole` 등 Resource를 `${var.project}-*` ARN으로 제한 (권한 상승 방지)
+  - S3 모듈: 미사용 `cors_allowed_origins` 변수 제거
+  - Lambda SSM 정책: KMS 기본 키 사용 설명 주석 추가
+
 - **02-27: GitHub Actions CI/CD 파이프라인 구축**
   - `deploy-infra.yml`: PR → 3환경 matrix plan + PR 코멘트 / `workflow_dispatch` → plan 또는 apply
   - `bootstrap/oidc.tf`: GitHub Actions OIDC provider + 환경별 IAM 역할 (`for_each`)

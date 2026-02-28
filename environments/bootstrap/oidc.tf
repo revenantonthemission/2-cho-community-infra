@@ -324,6 +324,7 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Resource = "*"
       },
       {
+        # 프로젝트 리소스에 한정된 IAM 관리 (권한 상승 방지)
         Sid    = "IAMRolesAndPolicies"
         Effect = "Allow"
         Action = [
@@ -332,9 +333,6 @@ resource "aws_iam_role_policy" "github_actions_infra" {
           "iam:GetRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy",
           "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies",
           "iam:ListRolePolicies", "iam:ListInstanceProfilesForRole",
-          "iam:GetPolicy", "iam:CreatePolicy", "iam:DeletePolicy",
-          "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
-          "iam:ListPolicyVersions",
           "iam:GetUser", "iam:CreateUser", "iam:DeleteUser", "iam:UpdateUser",
           "iam:TagUser", "iam:UntagUser", "iam:ListUserTags",
           "iam:GetLoginProfile", "iam:CreateLoginProfile", "iam:DeleteLoginProfile",
@@ -345,7 +343,24 @@ resource "aws_iam_role_policy" "github_actions_infra" {
           "iam:ListAttachedGroupPolicies", "iam:ListGroupPolicies",
           "iam:GetInstanceProfile", "iam:CreateInstanceProfile",
           "iam:DeleteInstanceProfile", "iam:AddRoleToInstanceProfile",
-          "iam:RemoveRoleFromInstanceProfile",
+          "iam:RemoveRoleFromInstanceProfile"
+        ]
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:group/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${var.project}-*"
+        ]
+      },
+      {
+        # IAM 정책 관리 (프로젝트 범위) + 계정 수준 설정
+        Sid    = "IAMPoliciesAndAccountSettings"
+        Effect = "Allow"
+        Action = [
+          "iam:GetPolicy", "iam:CreatePolicy", "iam:DeletePolicy",
+          "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
+          "iam:ListPolicyVersions",
           "iam:ListInstanceProfiles",
           "iam:CreateServiceLinkedRole",
           "iam:GetAccountPasswordPolicy", "iam:UpdateAccountPasswordPolicy",

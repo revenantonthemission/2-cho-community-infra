@@ -12,12 +12,6 @@ variable "environment" {
   type        = string
 }
 
-variable "cors_allowed_origins" {
-  description = "프론트엔드 CORS 허용 오리진 목록"
-  type        = list(string)
-  default     = ["*"]
-}
-
 variable "cloudtrail_log_retention_days" {
   description = "CloudTrail 로그 보존 일수"
   type        = number
