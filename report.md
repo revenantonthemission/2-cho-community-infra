@@ -410,8 +410,9 @@ flowchart LR
 - **SHA 태그**: `sha-<커밋해시>` 형식의 고유 태그로 Lambda를 업데이트하여 동시 배포 충돌을 방지합니다. `latest` 태그도 병행 push합니다.
 - **Blue/Green 배포 (Lambda Alias)**: 새 Lambda 버전을 `--publish`로 발행한 뒤, `/health` 직접 호출로 검증을 거쳐 Alias `live`를 전환합니다. Health check 실패 시 alias가 이전 버전을 유지하므로 서비스 영향 없이 안전하게 롤백됩니다.
 - **허용 목록 기반 S3 동기화**: `*.html`, `*.css`, `*.js`, 이미지, 폰트만 업로드하여 불필요한 파일(.git 등)이 배포되지 않습니다.
-- **Prod 배포 제한**: 프로덕션 환경은 upstream 레포지토리에서만 배포 가능하도록 OIDC 조건을 설정했습니다.
+- **Prod 배포 제한**: 프로덕션 환경은 upstream 레포지토리에서만 배포 가능하도록 OIDC 조건을 설정했습니다. Dev/Staging은 fork + upstream 모두 허용합니다.
 - **동시 배포 방지**: GitHub Actions `concurrency` 그룹으로 같은 환경에 대한 병렬 배포/롤백을 차단합니다.
+- **Terraform ↔ CD 역할 분리**: Lambda의 `image_uri`와 alias `function_version`에 `lifecycle { ignore_changes }`를 적용하여, `terraform apply`가 CD 파이프라인의 배포를 되돌리지 않습니다.
 
 ### 2.5 기술 스택 정리표
 
@@ -963,7 +964,7 @@ flowchart TD
     end
 
     subgraph Response["3. 대응"]
-        Lambda_Roll["Lambda 롤백<br/>이전 ECR 이미지"]
+        Lambda_Roll["Lambda 롤백<br/>Alias 이전 버전 전환"]
         Lambda_Scale["Provisioned 증설"]
         RDS_Scale["인스턴스 스케일 업"]
         RDS_Read["Read Replica 추가"]

@@ -580,8 +580,12 @@ terraform destroy \
 - **backend 블록 리터럴**: `backend "s3" {}` 블록에는 변수/locals 사용 불가. Terraform이 변수 평가 전에 백엔드를 초기화하기 때문
 - **DynamoDB `LockID`**: hash_key 이름은 대소문자 구분. 반드시 `"LockID"` (S3 백엔드가 사용하는 고정 키 이름)
 - **Lambda Alias `live`**: API Gateway가 alias ARN을 참조. `lifecycle { ignore_changes = [function_version] }`로 Terraform이 CD의 alias 변경을 덮어쓰지 않음
-- **Blue/Green 배포 IAM**: `bootstrap/oidc.tf`의 LambdaUpdate 문에 `lambda:PublishVersion`, `lambda:GetAlias`, `lambda:UpdateAlias`, `lambda:InvokeFunction` 필수
+- **Blue/Green 배포 IAM**: `bootstrap/oidc.tf`의 LambdaUpdate 문에 `lambda:PublishVersion`, `lambda:GetAlias`, `lambda:CreateAlias`, `lambda:UpdateAlias`, `lambda:InvokeFunction` 필수
 - **Provisioned Concurrency + Alias**: PC qualifier는 alias name 사용 (`aws_lambda_alias.live.name`). 버전 번호 대신 alias를 지정해야 alias 전환 시 PC가 자동으로 새 버전에 적용
+- **Lambda `image_uri` lifecycle guard**: `lifecycle { ignore_changes = [image_uri] }`로 Terraform이 CD가 배포한 SHA 태그를 `latest`로 되돌리지 않도록 방지
+- **OIDC dev/staging 배포 범위**: dev/staging 환경은 fork + upstream 모두 배포 허용, prod는 upstream 전용. `bootstrap/oidc.tf`의 `github_actions_subjects` 참조
+- **Health check payload**: Lambda 직접 invoke 시 Mangum이 `sourceIp`, `rawQueryString`, `headers` 등 API Gateway v2 필수 필드를 요구. CD 워크플로우의 PAYLOAD에 반드시 포함
+- **IAM 사용자 이름 패턴**: OIDC IAM 정책의 Resource에 `user/my-community-*`와 `user/admin-*` 패턴 모두 허용. `admin_username`이 프로젝트 접두사 없이 설정된 경우 대비
 
 ## Changelog
 
@@ -592,7 +596,10 @@ terraform destroy \
   - Provisioned Concurrency qualifier를 버전 → alias로 변경 (alias 전환 시 PC 자동 적용)
   - API Gateway Lambda permission에 `qualifier` + `create_before_destroy` 추가 (502 방지)
   - 3개 환경(dev/staging/prod) `main.tf`에 alias ARN 연결
-  - `bootstrap/oidc.tf`에 Blue/Green IAM 권한 4개 추가
+  - `bootstrap/oidc.tf`에 Blue/Green IAM 권한 5개 추가 (`CreateAlias` 포함)
+  - OIDC trust policy: dev/staging에서 upstream repo 배포 허용 (fork 전용 → fork+upstream)
+  - Lambda `lifecycle { ignore_changes = [image_uri] }` 추가 — Terraform이 CD 배포를 되돌리지 않도록 방지
+  - OIDC IAM에 `admin-*` 사용자 패턴 추가 (프로젝트 접두사 없는 IAM 사용자 지원)
 
 ### 2026-02 (Feb)
 
