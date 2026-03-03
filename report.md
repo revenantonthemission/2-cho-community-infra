@@ -1,6 +1,6 @@
 # 커뮤니티 서비스 "아무 말 대잔치" — 시스템 아키텍처 보고서
 
-> **작성일**: 2026-03-02
+> **작성일**: 2026-03-03
 > **프로젝트**: AWS AI School 2기 개인 프로젝트
 > **도메인**: my-community.shop
 > **리전**: ap-northeast-2 (서울)
@@ -39,7 +39,7 @@
 | **데이터베이스** | MySQL 8.0 (aiomysql) | FULLTEXT 검색(ngram), 트랜잭션 격리 | 커넥션 풀 관리, Lambda 스케일링 시 폭발 위험 |
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, 만료 토큰 주기적 정리 |
 | **인프라** | AWS (Terraform 15개 모듈) | 서버리스 아키텍처, IaC 재현성 | 3개 환경(Dev/Staging/Prod) 차등 설계 |
-| **CI/CD** | GitHub Actions + OIDC | 장기 자격 증명 없는 배포 | 환경별 분리 배포, ECR 이미지 롤백 지원 |
+| **CI/CD** | GitHub Actions + OIDC | 장기 자격 증명 없는 배포 | Blue/Green 배포 (Lambda Alias), Health check 게이트, 롤백 워크플로우 |
 | **부하 테스트** | Locust (gevent 기반) | 3종 사용자 시나리오 | 병목 사전 식별, 50~200 동시 사용자 검증 완료 |
 
 ### 1.3 서비스 특성과 인프라 요구사항
@@ -375,10 +375,12 @@ flowchart LR
         STS["AWS STS<br/>(임시 자격 증명 발급)"]
     end
 
-    subgraph Backend_Deploy["백엔드 배포"]
+    subgraph Backend_Deploy["백엔드 배포 (Blue/Green)"]
         Docker["Docker Build<br/>(--provenance=false)"]
         ECR_Push["ECR Push<br/>(sha-commit + latest)"]
-        Lambda_Update["Lambda UpdateFunctionCode"]
+        Lambda_Publish["Lambda Version Publish<br/>(--publish)"]
+        Health["Health Check<br/>(새 버전 직접 호출)"]
+        Alias_Switch["Alias 'live' 전환<br/>(update-alias)"]
     end
 
     subgraph Frontend_Deploy["프론트엔드 배포"]
@@ -393,7 +395,9 @@ flowchart LR
 
     Code --> Docker
     Docker --> ECR_Push
-    ECR_Push --> Lambda_Update
+    ECR_Push --> Lambda_Publish
+    Lambda_Publish --> Health
+    Health -->|"성공"| Alias_Switch
 
     Code --> S3_Sync
     S3_Sync --> CF_Inv
@@ -404,8 +408,10 @@ flowchart LR
 - **OIDC 인증**: 장기 자격 증명(AWS Access Key) 대신 GitHub Actions가 임시 토큰으로 AWS에 인증합니다. 키 유출 위험이 원천 차단됩니다.
 - **`--provenance=false`**: Docker 빌드 시 생성되는 출처 증명 메타데이터를 Lambda가 지원하지 않으므로 비활성화해야 합니다.
 - **SHA 태그**: `sha-<커밋해시>` 형식의 고유 태그로 Lambda를 업데이트하여 동시 배포 충돌을 방지합니다. `latest` 태그도 병행 push합니다.
+- **Blue/Green 배포 (Lambda Alias)**: 새 Lambda 버전을 `--publish`로 발행한 뒤, `/health` 직접 호출로 검증을 거쳐 Alias `live`를 전환합니다. Health check 실패 시 alias가 이전 버전을 유지하므로 서비스 영향 없이 안전하게 롤백됩니다.
 - **허용 목록 기반 S3 동기화**: `*.html`, `*.css`, `*.js`, 이미지, 폰트만 업로드하여 불필요한 파일(.git 등)이 배포되지 않습니다.
 - **Prod 배포 제한**: 프로덕션 환경은 upstream 레포지토리에서만 배포 가능하도록 OIDC 조건을 설정했습니다.
+- **동시 배포 방지**: GitHub Actions `concurrency` 그룹으로 같은 환경에 대한 병렬 배포/롤백을 차단합니다.
 
 ### 2.5 기술 스택 정리표
 
@@ -647,6 +653,7 @@ flowchart TD
 5. **S3 99.999999999% 내구성**: 99.999999999% 데이터 내구성
 6. **Lambda 자동 스케일링**: 요청량에 따라 자동으로 인스턴스 생성
 7. **Terraform State 보호**: S3 버전 관리 + DynamoDB 동시 수정 잠금
+8. **Blue/Green 배포**: Lambda Alias `live` 기반 즉시 트래픽 전환 + Health check 게이트 + 수동 롤백 워크플로우
 
 ### 4.2 가용 영역 분산 전략
 
@@ -845,7 +852,7 @@ flowchart TD
 | **CloudFront** | 0 (AWS 관리형) | ~0 (자동) | AWS 글로벌 인프라 자동 복구 |
 | **S3 (프론트엔드)** | 0 (99.999999999%) | ~0 (자동) | Git에서 재배포 가능 (< 5분) |
 | **API Gateway** | 0 (AWS 관리형) | ~0 (자동) | AWS 관리형 자동 복구 |
-| **Lambda** | 0 (Stateless) | < 1분 | ECR 이미지에서 자동 복구 |
+| **Lambda** | 0 (Stateless) | **~10초** | Alias 전환으로 즉시 롤백 (Blue/Green) |
 | **RDS (Prod)** | ~0 (동기 복제) | **60~120초** | Multi-AZ 자동 페일오버 |
 | **RDS (Dev/Stg)** | **최대 24시간** | **수 시간** | 자동 백업에서 수동 복원 |
 | **EFS** | 0 (3-AZ 복제) | ~0 (자동) | AWS 관리형 자동 복구 |
@@ -854,13 +861,13 @@ flowchart TD
 
 #### 4.5.2 주요 장애 복구 절차
 
-##### Lambda 장애 복구 (롤백)
+##### Lambda 장애 복구 (Blue/Green 롤백)
 
 ```mermaid
 flowchart LR
     Detect["CloudWatch 알람<br/>Lambda Errors > 5"]
     Identify["원인 파악<br/>로그 분석"]
-    Rollback["이전 ECR 이미지 롤백<br/>sha-{prev_commit}"]
+    Rollback["Alias 'live' 롤백<br/>이전 Lambda 버전으로 전환"]
     Verify["헬스체크 확인<br/>GET /health → 200"]
 
     Detect --> Identify --> Rollback --> Verify
@@ -872,13 +879,23 @@ flowchart LR
 ```
 
 ```bash
-# 이전 버전으로 롤백
-aws lambda update-function-code \
+# 방법 1: GitHub Actions 롤백 워크플로우 (권장)
+# Actions → rollback-backend.yml → 환경 선택 → 버전 지정 (선택)
+
+# 방법 2: CLI로 직접 alias 전환
+# 현재 alias가 가리키는 버전 확인
+aws lambda get-alias \
   --function-name my-community-prod-backend \
-  --image-uri {account}.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod:sha-{prev}
+  --name live
+
+# 이전 버전으로 alias 전환 (즉시 적용)
+aws lambda update-alias \
+  --function-name my-community-prod-backend \
+  --name live \
+  --function-version {prev_version}
 ```
 
-**RTO**: ~2분 (이미지 교체 + 콜드 스타트)
+**RTO**: ~10초 (Alias 전환 즉시, 콜드 스타트 없음 — 이전 버전이 이미 warm 상태)
 **RPO**: 0 (Stateless)
 
 ##### RDS 장애 복구
@@ -986,6 +1003,7 @@ flowchart TD
 | **보안 계층화** | VPC 격리, SSM 시크릿, OIDC 배포, MFA 강제, OAC 전용 S3 |
 | **환경별 차등 설계** | Dev(비용 최소) → Staging(중간) → Prod(HA 강화) 단계적 구성 |
 | **모니터링 기반** | CloudWatch 6개 알람 + 4개 위젯 대시보드 + CloudTrail 감사 |
+| **배포 안전성** | Blue/Green 배포로 Health check 통과 후에만 트래픽 전환, 실패 시 자동 유지 + 수동 롤백 워크플로우 |
 | **비용 효율** | Free Tier 활용(t3.micro), 단일 NAT(Dev), Provisioned Concurrency 최소화 |
 
 ### 5.2 현재 아키텍처의 약점
