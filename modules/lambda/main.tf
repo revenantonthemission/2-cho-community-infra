@@ -190,11 +190,26 @@ resource "aws_lambda_function" "backend" {
   })
 }
 
+# -----------------------------------------------------------------------------
+# Lambda Alias (Blue/Green 배포 — API Gateway가 이 alias를 바라봄)
+# CD 파이프라인이 update-alias로 버전을 전환하므로 Terraform은 최초 생성만 담당
+# -----------------------------------------------------------------------------
+resource "aws_lambda_alias" "live" {
+  name             = "live"
+  function_name    = aws_lambda_function.backend.function_name
+  function_version = aws_lambda_function.backend.version
+
+  # CD 파이프라인이 alias 버전을 관리 — terraform apply가 덮어쓰지 않도록 방지
+  lifecycle {
+    ignore_changes = [function_version]
+  }
+}
+
 # Provisioned Concurrency (prod만 — 콜드 스타트 방지)
 resource "aws_lambda_provisioned_concurrency_config" "backend" {
   count = var.provisioned_concurrency > 0 ? 1 : 0
 
   function_name                     = aws_lambda_function.backend.function_name
   provisioned_concurrent_executions = var.provisioned_concurrency
-  qualifier                         = aws_lambda_function.backend.version
+  qualifier                         = aws_lambda_alias.live.name
 }
