@@ -185,6 +185,11 @@ resource "aws_lambda_function" "backend" {
     aws_cloudwatch_log_group.lambda,
   ]
 
+  # CD 파이프라인이 image_uri를 SHA 태그로 관리 — terraform apply가 latest로 되돌리지 않도록 방지
+  lifecycle {
+    ignore_changes = [image_uri]
+  }
+
   tags = merge(var.tags, {
     Name = "${var.project}-${var.environment}-backend"
   })

@@ -357,6 +357,7 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Resource = [
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-*",
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/admin-*",
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:group/${var.project}-*",
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project}-*",
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${var.project}-*"
