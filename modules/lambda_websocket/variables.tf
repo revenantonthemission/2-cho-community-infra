@@ -39,6 +39,12 @@ variable "ws_api_endpoint" {
   type        = string
 }
 
+variable "ws_api_gateway_id" {
+  description = "WebSocket API Gateway ID (ManageConnections IAM 스코핑용)"
+  type        = string
+  default     = ""
+}
+
 variable "log_retention_days" {
   description = "로그 보존 일수"
   type        = number

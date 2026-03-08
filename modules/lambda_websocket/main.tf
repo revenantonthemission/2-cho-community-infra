@@ -52,11 +52,9 @@ resource "aws_iam_policy" "ws_lambda_policy" {
         ]
       },
       {
-        # 순환 참조 방지를 위해 와일드카드 사용
-        # execute-api:ManageConnections는 충분히 구체적인 액션
         Effect   = "Allow"
         Action   = "execute-api:ManageConnections"
-        Resource = "arn:aws:execute-api:${var.aws_region}:*:*/*"
+        Resource = var.ws_api_gateway_id != "" ? "arn:aws:execute-api:${var.aws_region}:*:${var.ws_api_gateway_id}/*" : "arn:aws:execute-api:${var.aws_region}:*:*/*"
       }
     ]
   })

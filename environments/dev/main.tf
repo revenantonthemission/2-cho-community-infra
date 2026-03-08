@@ -367,7 +367,8 @@ module "lambda_websocket" {
   dynamodb_table_name = module.dynamodb.table_name
   secret_key_ssm_arn  = module.lambda.secret_key_ssm_arn
   secret_key_ssm_name = module.lambda.secret_key_ssm_name
-  ws_api_endpoint     = module.api_gateway_websocket.management_endpoint
+  ws_api_endpoint    = module.api_gateway_websocket.management_endpoint
+  ws_api_gateway_id  = module.api_gateway_websocket.api_id
 
   log_retention_days = var.cloudwatch_log_retention_days
 

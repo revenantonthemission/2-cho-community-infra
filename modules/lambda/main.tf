@@ -207,7 +207,7 @@ resource "aws_lambda_function" "backend" {
       DEBUG           = var.environment == "prod" ? "false" : "true"
       UPLOAD_DIR      = "/mnt/uploads"
 
-      # WebSocket 푸시 설정 (프로덕션에서만 값이 설정됨)
+      # WebSocket 푸시 설정 (WebSocket 모듈 배포 시 값이 설정됨)
       WS_DYNAMODB_TABLE  = var.ws_dynamodb_table_name
       WS_API_GW_ENDPOINT = var.ws_api_gw_endpoint
 
