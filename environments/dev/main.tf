@@ -202,6 +202,7 @@ module "lambda" {
   log_retention_days      = var.lambda_log_retention_days
 
   # WebSocket 푸시 설정
+  enable_websocket_push = true
   aws_region             = var.aws_region
   ws_dynamodb_table_arn  = module.dynamodb.table_arn
   ws_dynamodb_table_name = module.dynamodb.table_name

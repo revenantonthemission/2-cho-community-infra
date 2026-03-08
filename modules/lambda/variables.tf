@@ -110,6 +110,12 @@ variable "log_retention_days" {
 }
 
 # WebSocket 푸시 설정 (선택 — 미설정 시 IAM 정책 미생성)
+variable "enable_websocket_push" {
+  description = "WebSocket 푸시 IAM 정책 생성 여부 (plan-time 조건)"
+  type        = bool
+  default     = false
+}
+
 variable "aws_region" {
   description = "AWS 리전"
   type        = string

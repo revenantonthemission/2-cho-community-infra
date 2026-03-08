@@ -96,9 +96,9 @@ resource "aws_iam_role_policy_attachment" "lambda_ssm" {
 }
 
 # WebSocket 푸시 권한 (DynamoDB 조회 + API Gateway ManageConnections)
-# ws_dynamodb_table_arn이 비어있으면 생성하지 않음 (WebSocket 미배포 환경 호환)
+# enable_websocket_push=false이면 생성하지 않음 (WebSocket 미배포 환경 호환)
 resource "aws_iam_policy" "lambda_websocket_push" {
-  count = var.ws_dynamodb_table_arn != "" ? 1 : 0
+  count = var.enable_websocket_push ? 1 : 0
   name  = "${var.project}-${var.environment}-lambda-ws-push"
 
   policy = jsonencode({
@@ -125,7 +125,7 @@ resource "aws_iam_policy" "lambda_websocket_push" {
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_websocket_push" {
-  count      = var.ws_dynamodb_table_arn != "" ? 1 : 0
+  count      = var.enable_websocket_push ? 1 : 0
   role       = aws_iam_role.lambda.name
   policy_arn = aws_iam_policy.lambda_websocket_push[0].arn
 }
