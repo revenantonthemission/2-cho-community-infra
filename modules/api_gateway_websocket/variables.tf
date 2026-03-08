@@ -8,16 +8,6 @@ variable "environment" {
   type        = string
 }
 
-variable "lambda_invoke_arn" {
-  description = "WebSocket Lambda invoke ARN"
-  type        = string
-}
-
-variable "lambda_function_name" {
-  description = "WebSocket Lambda function name"
-  type        = string
-}
-
 variable "ws_domain_name" {
   description = "WebSocket 도메인 (예: ws.my-community.shop)"
   type        = string

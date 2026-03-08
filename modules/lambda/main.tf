@@ -116,10 +116,9 @@ resource "aws_iam_policy" "lambda_websocket_push" {
         ]
       },
       {
-        # 순환 참조 방지를 위해 와일드카드 사용
         Effect   = "Allow"
         Action   = "execute-api:ManageConnections"
-        Resource = "arn:aws:execute-api:${var.aws_region}:*:*/*"
+        Resource = "arn:aws:execute-api:${var.aws_region}:*:${var.ws_api_gateway_id}/*"
       }
     ]
   })

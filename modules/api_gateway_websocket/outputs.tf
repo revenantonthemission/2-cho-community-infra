@@ -8,6 +8,11 @@ output "api_endpoint" {
   value       = aws_apigatewayv2_api.websocket.api_endpoint
 }
 
+output "execution_arn" {
+  description = "WebSocket API Gateway execution ARN (Lambda permission용)"
+  value       = aws_apigatewayv2_api.websocket.execution_arn
+}
+
 output "management_endpoint" {
   description = "API Gateway Management API endpoint (POST @connections)"
   value       = "https://${aws_apigatewayv2_api.websocket.id}.execute-api.${data.aws_region.current.id}.amazonaws.com/${var.environment}"

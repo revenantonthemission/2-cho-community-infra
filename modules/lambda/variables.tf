@@ -128,6 +128,12 @@ variable "ws_dynamodb_table_name" {
   default     = ""
 }
 
+variable "ws_api_gateway_id" {
+  description = "WebSocket API Gateway ID (ManageConnections IAM 스코핑용)"
+  type        = string
+  default     = ""
+}
+
 variable "ws_api_gw_endpoint" {
   description = "WebSocket API Gateway Management endpoint URL"
   type        = string

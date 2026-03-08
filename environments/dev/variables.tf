@@ -198,11 +198,6 @@ variable "lambda_log_retention_days" {
   default     = 14
 }
 
-variable "ws_lambda_zip_path" {
-  description = "WebSocket Lambda ZIP 파일 경로"
-  type        = string
-  default     = "../../websocket-lambda.zip"
-}
 
 # =============================================================================
 # EC2 (Bastion)

@@ -99,7 +99,22 @@ resource "aws_cloudwatch_log_group" "ws_lambda" {
 }
 
 # -----------------------------------------------------------------------------
+# Placeholder ZIP (최초 apply용 — CD 파이프라인이 실제 코드를 배포)
+# -----------------------------------------------------------------------------
+data "archive_file" "placeholder" {
+  type        = "zip"
+  output_path = "${path.module}/placeholder.zip"
+
+  source {
+    content  = "def lambda_handler(event, context): return {'statusCode': 200}"
+    filename = "handler.py"
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Lambda Function (ZIP 배포 — 경량 핸들러)
+# CD 파이프라인이 aws lambda update-function-code로 실제 코드를 배포하므로
+# Terraform은 placeholder로 최초 생성만 담당
 # -----------------------------------------------------------------------------
 resource "aws_lambda_function" "websocket" {
   function_name = "${var.project}-${var.environment}-websocket"
@@ -108,8 +123,8 @@ resource "aws_lambda_function" "websocket" {
   runtime = "python3.11"
   handler = "handler.lambda_handler"
 
-  filename         = var.lambda_zip_path
-  source_code_hash = filebase64sha256(var.lambda_zip_path)
+  filename         = data.archive_file.placeholder.output_path
+  source_code_hash = data.archive_file.placeholder.output_base64sha256
 
   memory_size = 256
   timeout     = 30
@@ -129,6 +144,11 @@ resource "aws_lambda_function" "websocket" {
     aws_iam_role_policy_attachment.ws_lambda_ssm,
     aws_cloudwatch_log_group.ws_lambda,
   ]
+
+  # CD 파이프라인이 코드를 관리 — terraform apply가 placeholder로 되돌리지 않도록 방지
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
 
   tags = merge(var.tags, {
     Name = "${var.project}-${var.environment}-websocket"

@@ -39,11 +39,6 @@ variable "ws_api_endpoint" {
   type        = string
 }
 
-variable "lambda_zip_path" {
-  description = "WebSocket Lambda ZIP 파일 경로"
-  type        = string
-}
-
 variable "log_retention_days" {
   description = "로그 보존 일수"
   type        = number
