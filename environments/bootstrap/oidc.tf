@@ -343,7 +343,7 @@ resource "aws_iam_role_policy" "github_actions_infra" {
           "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies",
           "iam:ListRolePolicies", "iam:ListInstanceProfilesForRole",
           "iam:GetUser", "iam:CreateUser", "iam:DeleteUser", "iam:UpdateUser",
-          "iam:TagUser", "iam:UntagUser", "iam:ListUserTags",
+          "iam:TagUser", "iam:UntagUser", "iam:ListUserTags", "iam:ListGroupsForUser",
           "iam:GetLoginProfile", "iam:CreateLoginProfile", "iam:DeleteLoginProfile",
           "iam:GetGroup", "iam:CreateGroup", "iam:DeleteGroup",
           "iam:AddUserToGroup", "iam:RemoveUserFromGroup",
