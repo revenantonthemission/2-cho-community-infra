@@ -1,22 +1,8 @@
 # 2-cho-community-infra
 
-AWS AI School 2기: 커뮤니티 포럼 "아무 말 대잔치" AWS 인프라
+커뮤니티 포럼 "아무 말 대잔치"의 AWS 인프라를 Terraform으로 관리하는 저장소입니다.
 
-## 요약 (Summary)
-
-- 커뮤니티 포럼 "아무 말 대잔치"의 AWS 인프라를 Terraform으로 관리하는 저장소입니다.
-- 15개의 재사용 가능한 Terraform 모듈로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다.
-- 서버리스 아키텍처(CloudFront + Lambda + API Gateway)를 채택하여 운영 부담을 최소화하고, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다.
-
-## 배경 (Background)
-
-- 커뮤니티 서비스의 프론트엔드(Vanilla JS)와 백엔드(FastAPI)가 각각 별도 저장소(`2-cho-community-fe`, `2-cho-community-be`)로 개발 완료되었습니다.
-- AWS 클라우드에 배포하기 위한 인프라의 규모가 점점 커져 이를 코드로 관리할 필요가 있으며, 환경별(개발/스테이징/프로덕션) 일관된 인프라 구성이 요구됩니다.
-
-수동 콘솔 작업 대신 Terraform을 선택한 이유:
-- **재현성**: 동일한 코드로 3개 환경을 일관되게 구성
-- **버전 관리**: 인프라 변경 이력을 Git으로 추적
-- **모듈화**: 15개 모듈을 독립적으로 개발 및 테스트 가능
+18개의 재사용 가능한 Terraform 모듈로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다. ECS/EKS 대신 서버리스 아키텍처(CloudFront + Lambda + API Gateway)를 채택하여 운영 부담을 최소화하고, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다. 콜드 스타트는 Prod의 Provisioned Concurrency(5)로 완화합니다.
 
 ## 목표 (Goals)
 
@@ -26,13 +12,6 @@ AWS AI School 2기: 커뮤니티 포럼 "아무 말 대잔치" AWS 인프라
 - 파일 업로드를 EFS에 영구 저장한다 (Lambda 컨테이너가 다시 생성되어도 파일 보존).
 - 환경별(dev/staging/prod) 리소스 규모를 차등 적용하여 비용을 최적화한다.
 - CloudWatch 알람/대시보드와 CloudTrail 감사 로그로 모니터링한다.
-
-## 목표가 아닌 것 (Non-Goals)
-
-- 멀티 리전 배포
-- Kubernetes/ECS 컨테이너 오케스트레이션
-- WAF (Web Application Firewall) 적용
-- 자동 스케일링 정책 (Lambda Provisioned Concurrency만 사용)
 
 ## 사전 요구사항
 
@@ -69,11 +48,22 @@ flowchart TD
         EFS -.->|"파일 마운트"| Lambda
     end
 
+    subgraph WebSocket["WebSocket 경로"]
+        WSGW["WebSocket API Gateway"]
+        Lambda_WS["Lambda<br/>WebSocket Handler"]
+        WSGW --> Lambda_WS
+    end
+
+    User -->|"wss://ws.my-community.shop"| WSGW
+
     subgraph Data["데이터 계층 (프라이빗 서브넷)"]
         RDS["RDS<br/>MySQL 8.0"]
+        DynamoDB["DynamoDB<br/>ws_connections"]
     end
 
     Lambda --> RDS
+    Lambda -->|"푸시 알림"| DynamoDB
+    Lambda_WS --> DynamoDB
 
     subgraph Infra["보조 인프라"]
         VPC["VPC — 2 AZ, 퍼블릭/프라이빗 서브넷, NAT GW"]
@@ -110,6 +100,11 @@ flowchart LR
     CloudWatch --> RDS
     CloudWatch --> API_GW
 
+    DynamoDB --> Lambda_WS["Lambda (WebSocket)"]
+    Lambda_WS --> WS_APIGW["WebSocket API GW"]
+    ACM --> WS_APIGW
+    Route53 --> WS_APIGW
+
     S3 --> CloudTrail
     S3 --> CloudFront
 
@@ -117,9 +112,9 @@ flowchart LR
     Route53 --> CloudFront
 ```
 
-배포 순서: IAM → VPC → S3 → Route 53 → ACM → ECR → RDS → EFS → Lambda → API Gateway → CloudWatch → EC2 → CloudTrail → ACM (us-east-1) → CloudFront
+배포 순서: IAM → VPC → S3 → Route 53 → ACM → ECR → RDS → EFS → Lambda → API Gateway → DynamoDB → WebSocket Lambda → WebSocket API Gateway → CloudWatch → EC2 → CloudTrail → ACM (us-east-1) → CloudFront
 
-### 2. 모듈 설계 (15개)
+### 2. 모듈 설계 (18개)
 
 | # | 모듈 | 설명 | 주요 리소스 |
 |---|------|------|-------------|
@@ -127,18 +122,21 @@ flowchart LR
 | 1 | `vpc` | 네트워크 + 보안 그룹 | VPC, Subnet, NAT GW, SG |
 | 2 | `s3` | 프론트엔드 호스팅 + 로그 저장 | S3 Bucket (website, logs) |
 | 3 | `route53` | DNS 호스팅 영역 | Hosted Zone |
-| 3 | `acm` | SSL 인증서 (API Gateway용) | ACM Certificate |
-| 4 | `ecr` | 컨테이너 이미지 레지스트리 | ECR Repository |
-| 5 | `rds` | MySQL 데이터베이스 | RDS Instance, Subnet Group |
-| 6 | `efs` | 파일 업로드 스토리지 | EFS File System, Access Point |
-| 7 | `lambda` | 백엔드 함수 | Lambda Function, IAM Role |
-| 8 | `api_gateway` | API 라우팅 + 커스텀 도메인 | HTTP API, Stage, Domain |
-| 9 | `cloudwatch` | 모니터링 | Alarms, Dashboard |
-| 10 | `ec2` | Bastion Host | EC2 Instance, EIP, Key Pair |
-| 11 | `cloudtrail` | 감사 로그 | CloudTrail |
-| 12 | `acm` (us-east-1) | SSL 인증서 (CloudFront용) | ACM Certificate |
-| 13 | `cloudfront` | CDN + HTTPS + Clean URL | Distribution, Function |
-| 14 | `tfstate` | Terraform 원격 상태 백엔드 | S3 Bucket, DynamoDB Table |
+| 4 | `acm` | SSL 인증서 (API Gateway용) | ACM Certificate |
+| 5 | `ecr` | 컨테이너 이미지 레지스트리 | ECR Repository |
+| 6 | `rds` | MySQL 데이터베이스 | RDS Instance, Subnet Group |
+| 7 | `efs` | 파일 업로드 스토리지 | EFS File System, Access Point |
+| 8 | `lambda` | 백엔드 함수 | Lambda Function, IAM Role |
+| 9 | `api_gateway` | API 라우팅 + 커스텀 도메인 | HTTP API, Stage, Domain |
+| 10 | `cloudwatch` | 모니터링 | Alarms, Dashboard |
+| 11 | `ec2` | Bastion Host | EC2 Instance, EIP, Key Pair |
+| 12 | `cloudtrail` | 감사 로그 | CloudTrail |
+| 13 | `acm` (us-east-1) | SSL 인증서 (CloudFront용) | ACM Certificate |
+| 14 | `cloudfront` | CDN + HTTPS + Clean URL | Distribution, Function |
+| 15 | `dynamodb` | WebSocket 연결 저장소 | DynamoDB Table (ws_connections) |
+| 16 | `api_gateway_websocket` | WebSocket API 라우팅 | WebSocket API, Stage |
+| 17 | `lambda_websocket` | WebSocket 핸들러 | Lambda Function (ZIP), IAM Role |
+| 18 | `tfstate` | Terraform 원격 상태 백엔드 | S3 Bucket, DynamoDB Table |
 
 #### 디렉토리 구조
 
@@ -159,6 +157,9 @@ flowchart LR
 │   ├── ec2/
 │   ├── cloudtrail/
 │   ├── cloudfront/
+│   ├── dynamodb/
+│   ├── api_gateway_websocket/
+│   ├── lambda_websocket/
 │   └── tfstate/                # S3 + DynamoDB 원격 상태 백엔드
 │
 ├── environments/               # 환경별 설정
@@ -177,6 +178,8 @@ flowchart LR
 
 ### 3. 네트워크 설계
 
+각 환경(dev/staging/prod)에 독립 VPC를 할당하여 CIDR 충돌을 방지합니다. VPC Peering이 필요한 경우 기존 CIDR(`10.0/1/2.0.0/16`)과 겹치지 않도록 설계해야 합니다.
+
 #### VPC CIDR 계획
 
 | 환경 | VPC CIDR | 퍼블릭 서브넷 | 프라이빗 서브넷 |
@@ -190,6 +193,8 @@ flowchart LR
 - 가용 영역: `ap-northeast-2a`, `ap-northeast-2b` (2 AZ)
 
 #### NAT Gateway 전략
+
+Dev/Staging에서는 단일 NAT Gateway($32/월)로 비용을 절감하고, Prod에서만 AZ별 NAT Gateway를 배치하여 고가용성을 확보합니다.
 
 | 환경 | NAT Gateway | 비용 | 장애 내성 |
 |------|-------------|------|-----------|
@@ -247,6 +252,8 @@ Lambda 환경변수:
 - `UPLOAD_DIR=/mnt/uploads` — EFS 마운트 경로
 - `AWS_LAMBDA_EXEC=true` — 로컬/Lambda 환경 분기
 - `HTTPS_ONLY=true` — Secure 쿠키 플래그
+- `WS_API_ENDPOINT` — WebSocket API Gateway Management API 엔드포인트
+- `WS_CONNECTIONS_TABLE` — DynamoDB 연결 테이블 이름
 
 #### RDS (데이터베이스)
 
@@ -266,6 +273,8 @@ Lambda 환경변수:
 
 #### EFS (파일 업로드)
 
+Lambda 파일시스템에 직접 마운트 가능한 EFS를 선택했습니다. S3는 SDK 호출이 필요하고 기존 로컬 파일시스템 코드(`utils/storage.py`)의 수정이 크기 때문입니다.
+
 - 마운트 경로: `/mnt/uploads`
 - 접근 방식: Access Point (POSIX UID/GID)
 - Lambda IAM 조건부 권한: 파일 시스템 ARN을 Resource로, 액세스 포인트를 Condition으로 지정
@@ -284,7 +293,7 @@ Lambda 환경변수:
 
 - **오리진**: S3 버킷 (OAC — Origin Access Control로 접근)
 - **SSL**: ACM 인증서 (반드시 `us-east-1` 리전에 생성)
-- **Clean URL**: CloudFront Functions로 URL 재작성
+- **Clean URL**: CloudFront Functions로 URL 재작성 (CloudFront Functions는 단순 URL 재작성에 적합하며 Lambda@Edge 대비 비용 1/6, 지연시간 <1ms)
 
 ```text
 요청 경로          →  S3 오브젝트
@@ -297,6 +306,7 @@ Lambda 환경변수:
 /edit              →  /post_edit.html
 /password          →  /user_password.html
 /edit-profile      →  /user_edit.html
+/find-account      →  /user_find_account.html
 ```
 
 CloudFront Function의 `routes` 맵은 프론트엔드 `constants.js`의 `HTML_PATHS`와 반드시 동기화해야 합니다.
@@ -306,6 +316,7 @@ CloudFront Function의 `routes` 맵은 프론트엔드 `constants.js`의 `HTML_P
 - 호스팅 영역: `my-community.shop`
 - A 레코드 (Alias): `my-community.shop` → CloudFront 배포
 - A 레코드 (Alias): `api.my-community.shop` → API Gateway 커스텀 도메인
+- A 레코드 (Alias): `ws.my-community.shop` → WebSocket API Gateway 커스텀 도메인
 
 #### ACM 인증서
 
@@ -338,6 +349,10 @@ CloudFront Function의 `routes` 맵은 프론트엔드 `constants.js`의 `HTML_P
 #### CORS 이중 레이어
 
 API Gateway의 `cors_configuration`과 Lambda(FastAPI)의 `CORSMiddleware`가 모두 CORS를 처리합니다. `terraform.tfvars`의 `cors_allowed_origins`와 Lambda 환경변수 `ALLOWED_ORIGINS`가 자동으로 동기화됩니다.
+
+#### Terraform 상태 관리
+
+S3 + DynamoDB 원격 백엔드를 사용합니다. 단일 S3 버킷(`my-community-tfstate`)에 환경별 키(`dev/`, `staging/`, `prod/`)로 분리 저장하고, DynamoDB 테이블(`terraform-locks`)로 동시 실행을 방지합니다. S3 Versioning으로 상태 파일 복구가 가능합니다. 부트스트랩 환경(`environments/bootstrap/`)은 로컬 상태를 영구적으로 사용합니다 (chicken-and-egg 문제 회피).
 
 ### 7. 모니터링
 
@@ -531,16 +546,6 @@ terraform destroy \
   -var="secret_key=JWT시크릿키"
 ```
 
-## 이외 고려 사항들 (Other Considerations)
-
-- **서버리스 vs 컨테이너 오케스트레이션**: ECS/EKS 대신 Lambda + API Gateway를 선택. 운영 부담 최소화, Free Tier 활용, 트래픽이 낮은 커뮤니티 서비스에 적합. 콜드 스타트는 Prod의 Provisioned Concurrency(5)로 완화.
-- **Terraform 상태 관리**: S3 + DynamoDB 원격 백엔드 사용. 단일 S3 버킷(`my-community-tfstate`)에 환경별 키(`dev/`, `staging/`, `prod/`)로 분리 저장. DynamoDB 테이블(`terraform-locks`)로 동시 실행 방지. S3 Versioning으로 상태 파일 복구 가능. 부트스트랩 환경(`environments/bootstrap/`)은 로컬 상태를 영구적으로 사용 (chicken-and-egg 문제 회피).
-
-- **VPC 환경 분리**: 각 환경(dev/staging/prod)에 독립 VPC를 할당하여 CIDR 충돌 방지. VPC Peering이 필요한 경우 기존 CIDR(`10.0/1/2.0.0/16`)과 겹치지 않도록 설계.
-- **NAT Gateway 비용**: Dev/Staging에서는 단일 NAT Gateway($32/월)로 비용 절감. Prod에서만 AZ별 NAT Gateway 배치로 고가용성 확보.
-- **EFS vs S3 for uploads**: Lambda 파일시스템에 직접 마운트 가능한 EFS를 선택. S3는 SDK 호출 필요하고 기존 로컬 파일시스템 코드(`utils/storage.py`)의 수정이 큼.
-- **CloudFront Functions vs Lambda@Edge**: 단순 URL 재작성에는 CloudFront Functions가 적합 (비용 1/6, 지연시간 <1ms). 복잡한 로직(인증, 이미지 리사이징)이 필요하면 Lambda@Edge로 전환.
-
 ## 환경별 설정 요약
 
 | 항목 | Dev | Staging | Prod |
@@ -582,53 +587,5 @@ terraform destroy \
 - **Lambda Alias `live`**: API Gateway가 alias ARN을 참조. `lifecycle { ignore_changes = [function_version] }`로 Terraform이 CD의 alias 변경을 덮어쓰지 않음
 - **Blue/Green 배포 IAM**: `bootstrap/oidc.tf`의 LambdaUpdate 문에 `lambda:PublishVersion`, `lambda:GetAlias`, `lambda:UpdateAlias`, `lambda:InvokeFunction` 필수
 - **Provisioned Concurrency + Alias**: PC qualifier는 alias name 사용 (`aws_lambda_alias.live.name`). 버전 번호 대신 alias를 지정해야 alias 전환 시 PC가 자동으로 새 버전에 적용
-
-## Changelog
-
-### 2026-03 (Mar)
-
-- **03-03: Blue/Green Deployment (Lambda Alias 기반)**
-  - Lambda Alias `live` 추가 (`modules/lambda/main.tf`): API Gateway → Alias → Version N 구조
-  - Provisioned Concurrency qualifier를 버전 → alias로 변경 (alias 전환 시 PC 자동 적용)
-  - API Gateway Lambda permission에 `qualifier` + `create_before_destroy` 추가 (502 방지)
-  - 3개 환경(dev/staging/prod) `main.tf`에 alias ARN 연결
-  - `bootstrap/oidc.tf`에 Blue/Green IAM 권한 4개 추가
-
-### 2026-02 (Feb)
-
-- **02-28: 전체 코드 리뷰 기반 인프라 개선**
-  - Lambda `publish = true` 추가 (Provisioned Concurrency가 `$LATEST` 대신 실제 버전 참조)
-  - Bastion 조건부 생성: `create_bastion` 변수 추가, staging/prod에서 비활성화 (비용 절감)
-  - RDS `parameter_group_family` 자동 파생 (`engine_version`에서 계산, 별도 변수 제거)
-  - CloudTrail 멀티리전 활성화 (`us-east-1` ACM/CloudFront 이벤트 감사 포함)
-  - CloudFront 에러 응답: 404/403을 200으로 마스킹 → 원본 상태 코드 유지
-  - IAM: `terraform_deployer` 역할 `AdministratorAccess` → `PowerUserAccess` 다운그레이드
-  - IAM: `iam:CreatePolicy`를 `${var.project}-*`로 제한 (권한 상승 벡터 차단)
-  - 민감 정보 제거: `terraform.tfvars`에서 SSH 공개키/개인 IP → 플레이스홀더 교체
-  - CloudTrail `log_retention_days`를 환경별 변수로 전달
-
-- **02-28: 보안 취약점 수정 (Critical)**
-  - S3 프론트엔드: 퍼블릭 웹사이트 호스팅 → 비공개 버킷 + CloudFront OAC
-  - Lambda 시크릿: 평문 환경변수(`DB_PASSWORD`, `SECRET_KEY`) → SSM Parameter Store SecureString
-  - OIDC IAM: AdministratorAccess → 서비스별 스코프 IAM 정책 (최소 권한)
-
-- **02-28: 코드 리뷰 기반 인프라 정리**
-  - OIDC IAM: `iam:CreateRole` 등 Resource를 `${var.project}-*` ARN으로 제한 (권한 상승 방지)
-  - S3 모듈: 미사용 `cors_allowed_origins` 변수 제거
-  - Lambda SSM 정책: KMS 기본 키 사용 설명 주석 추가
-
-- **02-27: GitHub Actions CI/CD 파이프라인 구축**
-  - `deploy-infra.yml`: PR → 3환경 matrix plan + PR 코멘트 / `workflow_dispatch` → plan 또는 apply
-  - `bootstrap/oidc.tf`: GitHub Actions OIDC provider + 환경별 IAM 역할 (`for_each`)
-  - OIDC 인증 (GitHub → AWS STS AssumeRoleWithWebIdentity), fork/upstream 분리
-
-- **02-26: S3 + DynamoDB 원격 상태 백엔드 전환**
-  - `modules/tfstate/` 모듈 추가 (S3 버킷 + DynamoDB 테이블)
-  - `environments/bootstrap/` 부트스트랩 환경 추가
-  - 3개 환경에 `backend "s3"` 블록 추가, 로컬 → S3 마이그레이션
-
-- **02-26: Terraform 인프라 전체 구축**
-  - 14개 모듈 설계 및 3개 환경(dev/staging/prod) 배포
-  - 서버리스 아키텍처: CloudFront + Lambda + API Gateway + RDS + EFS
-  - CloudFront Functions Clean URL, CORS 이중 레이어 설정
-  - 환경별 리소스 차등 적용 (Free Tier → HA 구성)
+- **WebSocket Lambda는 ZIP 배포**: REST Lambda(Container)와 달리 WebSocket Lambda는 `data "archive_file"` ZIP 패키지 사용. CD에서 `aws lambda update-function-code --zip-file` 사용
+- **순환 참조 해소**: `api_gateway_websocket` 모듈은 API+Stage만 생성. Lambda 통합/라우트/권한은 환경 `main.tf`에서 standalone resource로 관리
