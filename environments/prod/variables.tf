@@ -185,14 +185,10 @@ variable "secret_key" {
 }
 
 variable "internal_api_key" {
-  description = "내부 API 인증 키 (EventBridge 배치 작업 호출용)"
+  description = "내부 API 인증 키 (EventBridge 배치 작업 호출용). 빈 값이면 EventBridge 모듈 비활성화"
   type        = string
   sensitive   = true
-
-  validation {
-    condition     = var.internal_api_key != "change-me" && length(var.internal_api_key) > 0
-    error_message = "internal_api_key는 'change-me'가 아닌 실제 키를 -var 또는 secret.tfvars로 전달해야 합니다."
-  }
+  default     = ""
 }
 
 variable "lambda_memory_size" {

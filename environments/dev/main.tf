@@ -420,8 +420,10 @@ resource "aws_lambda_permission" "ws_api_gateway" {
 # =============================================================================
 # Module 17: EventBridge (배치 작업 스케줄)
 # =============================================================================
+# internal_api_key가 비어 있으면 EventBridge 모듈 비활성화 (CI plan 호환)
 module "eventbridge" {
   source = "../../modules/eventbridge"
+  count  = length(var.internal_api_key) > 0 ? 1 : 0
 
   project     = var.project
   environment = var.environment
