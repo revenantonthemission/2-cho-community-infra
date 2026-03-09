@@ -463,6 +463,19 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         ]
       },
       {
+        Sid    = "EventBridgeSecretsManager"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:CreateSecret",
+          "secretsmanager:UpdateSecret",
+          "secretsmanager:DeleteSecret",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:PutSecretValue"
+        ]
+        Resource = "arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:events!connection/${var.project}-*"
+      },
+      {
         Sid    = "KMSForEncryption"
         Effect = "Allow"
         Action = [
