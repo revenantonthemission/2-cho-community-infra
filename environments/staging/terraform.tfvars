@@ -38,10 +38,10 @@ rds_backup_retention_days = 3
 rds_deletion_protection   = false
 
 # DB 자격 증명 (terraform apply 시 -var로 전달)
-# db_username = "community_user"
-# db_password = "change-me"
-# secret_key  = "change-me"
-# internal_api_key = "change-me"
+db_username = "community_user"
+db_password = "change-me"
+secret_key  = "change-me"
+internal_api_key = "change-me"
 
 # Lambda (staging: 중간 사양)
 # CD 워크플로우(deploy-backend.yml)에서 sha-<commit> 태그로 업데이트
