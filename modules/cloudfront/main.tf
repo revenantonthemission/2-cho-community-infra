@@ -20,24 +20,24 @@ resource "aws_cloudfront_function" "url_rewrite" {
       // 클린 URL → 실제 HTML 파일 매핑 (프론트엔드 HTML_PATHS와 동기화)
       var routes = {
         '/':                '/${var.default_root_object}',
-        '/main':            '/post_list.html',
-        '/login':           '/user_login.html',
-        '/signup':          '/user_signup.html',
-        '/write':           '/post_write.html',
-        '/detail':          '/post_detail.html',
-        '/edit':            '/post_edit.html',
-        '/password':        '/user_password.html',
-        '/edit-profile':    '/user_edit.html',
-        '/find-account':    '/user_find_account.html',
-        '/notifications':   '/notifications.html',
-        '/my-activity':     '/my-activity.html',
-        '/verify-email':    '/verify-email.html',
-        '/user-profile':    '/user-profile.html',
-        '/admin/reports':   '/admin_reports.html',
-        '/admin/dashboard': '/admin_dashboard.html',
-        '/messages':        '/dm_list.html',
-        '/messages/inbox':  '/dm.html',
-        '/messages/detail': '/dm_detail.html'
+        '/main':            '/html/post_list.html',
+        '/login':           '/html/user_login.html',
+        '/signup':          '/html/user_signup.html',
+        '/write':           '/html/post_write.html',
+        '/detail':          '/html/post_detail.html',
+        '/edit':            '/html/post_edit.html',
+        '/password':        '/html/user_password.html',
+        '/edit-profile':    '/html/user_edit.html',
+        '/find-account':    '/html/user_find_account.html',
+        '/notifications':   '/html/notifications.html',
+        '/my-activity':     '/html/my-activity.html',
+        '/verify-email':    '/html/verify-email.html',
+        '/user-profile':    '/html/user-profile.html',
+        '/admin/reports':   '/html/admin_reports.html',
+        '/admin/dashboard': '/html/admin_dashboard.html',
+        '/messages':        '/html/dm_list.html',
+        '/messages/inbox':  '/html/dm.html',
+        '/messages/detail': '/html/dm_detail.html'
       };
 
       if (routes.hasOwnProperty(uri)) {

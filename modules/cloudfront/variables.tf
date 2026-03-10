@@ -51,7 +51,7 @@ variable "api_domain_name" {
 variable "default_root_object" {
   description = "기본 루트 객체"
   type        = string
-  default     = "user_login.html"
+  default     = "html/user_login.html"
 }
 
 variable "price_class" {
