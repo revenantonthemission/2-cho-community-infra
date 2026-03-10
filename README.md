@@ -2,7 +2,7 @@
 
 커뮤니티 포럼 "아무 말 대잔치"의 AWS 인프라를 Terraform으로 관리하는 저장소입니다.
 
-18개의 재사용 가능한 Terraform 모듈로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다. ECS/EKS 대신 서버리스 아키텍처(CloudFront + Lambda + API Gateway)를 채택하여 운영 부담을 최소화하고, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다. 콜드 스타트는 Prod의 Provisioned Concurrency(5)로 완화합니다.
+19개의 재사용 가능한 Terraform 모듈로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다. ECS/EKS 대신 서버리스 아키텍처(CloudFront + Lambda + API Gateway)를 채택하여 운영 부담을 최소화하고, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다. 콜드 스타트는 Prod의 Provisioned Concurrency(5)로 완화합니다.
 
 ## 목표 (Goals)
 
@@ -112,9 +112,9 @@ flowchart LR
     Route53 --> CloudFront
 ```
 
-배포 순서: IAM → VPC → S3 → Route 53 → ACM → ECR → RDS → EFS → Lambda → API Gateway → DynamoDB → WebSocket Lambda → WebSocket API Gateway → CloudWatch → EC2 → CloudTrail → ACM (us-east-1) → CloudFront
+배포 순서: IAM → VPC → S3 → Route 53 → ACM → ECR → RDS → EFS → Lambda → API Gateway → DynamoDB → WebSocket Lambda → WebSocket API Gateway → EventBridge → CloudWatch → EC2 → CloudTrail → ACM (us-east-1) → CloudFront
 
-### 2. 모듈 설계 (18개)
+### 2. 모듈 설계 (19개)
 
 | # | 모듈 | 설명 | 주요 리소스 |
 |---|------|------|-------------|
@@ -133,10 +133,11 @@ flowchart LR
 | 12 | `cloudtrail` | 감사 로그 | CloudTrail |
 | 13 | `acm` (us-east-1) | SSL 인증서 (CloudFront용) | ACM Certificate |
 | 14 | `cloudfront` | CDN + HTTPS + Clean URL | Distribution, Function |
-| 15 | `dynamodb` | WebSocket 연결 저장소 | DynamoDB Table (ws_connections) |
+| 15 | `dynamodb` | WebSocket 연결 + Rate Limit 저장소 | DynamoDB Table (ws_connections, rate_limit) |
 | 16 | `api_gateway_websocket` | WebSocket API 라우팅 | WebSocket API, Stage |
 | 17 | `lambda_websocket` | WebSocket 핸들러 | Lambda Function (ZIP), IAM Role |
-| 18 | `tfstate` | Terraform 원격 상태 백엔드 | S3 Bucket, DynamoDB Table |
+| 18 | `eventbridge` | EventBridge 스케줄 + API Destination | EventBridge Rule, Connection |
+| 19 | `tfstate` | Terraform 원격 상태 백엔드 | S3 Bucket, DynamoDB Table |
 
 #### 디렉토리 구조
 
@@ -160,6 +161,7 @@ flowchart LR
 │   ├── dynamodb/
 │   ├── api_gateway_websocket/
 │   ├── lambda_websocket/
+│   ├── eventbridge/           # EventBridge 스케줄 (토큰 정리, 피드 재계산)
 │   └── tfstate/                # S3 + DynamoDB 원격 상태 백엔드
 │
 ├── environments/               # 환경별 설정
@@ -254,6 +256,9 @@ Lambda 환경변수:
 - `HTTPS_ONLY=true` — Secure 쿠키 플래그
 - `WS_API_ENDPOINT` — WebSocket API Gateway Management API 엔드포인트
 - `WS_CONNECTIONS_TABLE` — DynamoDB 연결 테이블 이름
+- `RATE_LIMIT_BACKEND` — Rate Limiter 백엔드 (`memory` 또는 `dynamodb`)
+- `RATE_LIMIT_DYNAMODB_TABLE` — Rate Limit DynamoDB 테이블 이름
+- `INTERNAL_API_KEY_SSM_NAME` — SSM Parameter Store에서 내부 API 키 조회 (SecureString)
 
 #### RDS (데이터베이스)
 
@@ -297,16 +302,25 @@ Lambda 파일시스템에 직접 마운트 가능한 EFS를 선택했습니다. 
 
 ```text
 요청 경로          →  S3 오브젝트
-/                  →  /post_list.html
-/main              →  /post_list.html
-/login             →  /user_login.html
-/signup            →  /user_signup.html
-/write             →  /post_write.html
-/detail            →  /post_detail.html
-/edit              →  /post_edit.html
-/password          →  /user_password.html
-/edit-profile      →  /user_edit.html
-/find-account      →  /user_find_account.html
+/                  →  /html/post_list.html
+/main              →  /html/post_list.html
+/login             →  /html/user_login.html
+/signup            →  /html/user_signup.html
+/write             →  /html/post_write.html
+/detail            →  /html/post_detail.html
+/edit              →  /html/post_edit.html
+/password          →  /html/user_password.html
+/edit-profile      →  /html/user_edit.html
+/find-account      →  /html/user_find_account.html
+/notifications     →  /html/notifications.html
+/my-activity       →  /html/my-activity.html
+/verify-email      →  /html/verify-email.html
+/user-profile      →  /html/user-profile.html
+/messages          →  /html/dm_list.html
+/messages/inbox    →  /html/dm.html
+/messages/detail   →  /html/dm_detail.html
+/admin/reports     →  /html/admin_reports.html
+/admin/dashboard   →  /html/admin_dashboard.html
 ```
 
 CloudFront Function의 `routes` 맵은 프론트엔드 `constants.js`의 `HTML_PATHS`와 반드시 동기화해야 합니다.
