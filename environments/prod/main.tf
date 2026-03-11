@@ -117,6 +117,21 @@ module "acm" {
 }
 
 # =============================================================================
+# Module 3.5: SES (이메일 발송)
+# =============================================================================
+module "ses" {
+  source = "../../modules/ses"
+
+  project     = var.project
+  environment = var.environment
+
+  domain_name = var.domain_name
+  zone_id     = module.route53.zone_id
+
+  tags = local.common_tags
+}
+
+# =============================================================================
 # Module 4: ECR
 # =============================================================================
 module "ecr" {
@@ -202,6 +217,11 @@ module "lambda" {
   rate_limit_dynamodb_table_name = module.dynamodb.rate_limit_table_name
 
   cors_allowed_origins = var.cors_allowed_origins
+
+  # 이메일 발송 (SES)
+  ses_domain_identity_arn = module.ses.domain_identity_arn
+  email_from             = "noreply@${var.domain_name}"
+  frontend_url           = "https://${var.domain_name}"
 
   memory_size             = var.lambda_memory_size
   timeout                 = var.lambda_timeout

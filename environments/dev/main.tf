@@ -115,6 +115,21 @@ module "acm" {
 }
 
 # =============================================================================
+# Module 3.5: SES (이메일 발송)
+# =============================================================================
+module "ses" {
+  source = "../../modules/ses"
+
+  project     = var.project
+  environment = var.environment
+
+  domain_name = var.domain_name
+  zone_id     = module.route53.zone_id
+
+  tags = local.common_tags
+}
+
+# =============================================================================
 # Module 4: ECR
 # =============================================================================
 module "ecr" {
@@ -205,6 +220,11 @@ module "lambda" {
   timeout                 = var.lambda_timeout
   provisioned_concurrency = var.lambda_provisioned_concurrency
   log_retention_days      = var.lambda_log_retention_days
+
+  # 이메일 발송 (SES)
+  ses_domain_identity_arn = module.ses.domain_identity_arn
+  email_from             = "noreply@${var.domain_name}"
+  frontend_url           = "https://${var.domain_name}"
 
   # WebSocket 푸시 설정
   enable_websocket_push  = true

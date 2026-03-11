@@ -166,6 +166,25 @@ variable "ws_api_gw_endpoint" {
   default     = ""
 }
 
+# 이메일 발송 (SES)
+variable "ses_domain_identity_arn" {
+  description = "SES Domain Identity ARN (비어있으면 SES IAM 정책 미생성)"
+  type        = string
+  default     = ""
+}
+
+variable "email_from" {
+  description = "발신 이메일 주소 (예: noreply@my-community.shop)"
+  type        = string
+  default     = ""
+}
+
+variable "frontend_url" {
+  description = "프론트엔드 URL (이메일 인증 링크에 사용)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "공통 태그"
   type        = map(string)

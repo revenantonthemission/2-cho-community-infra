@@ -82,6 +82,12 @@ output "dashboard_name" {
   value       = module.cloudwatch.dashboard_name
 }
 
+# SES
+output "ses_domain_identity_arn" {
+  description = "SES Domain Identity ARN"
+  value       = module.ses.domain_identity_arn
+}
+
 # CloudFront
 output "cloudfront_domain" {
   description = "CloudFront 도메인"

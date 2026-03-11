@@ -157,6 +157,32 @@ resource "aws_iam_role_policy_attachment" "lambda_websocket_push" {
   policy_arn = aws_iam_policy.lambda_websocket_push[0].arn
 }
 
+# SES 이메일 발송 권한
+resource "aws_iam_policy" "lambda_ses" {
+  count = var.ses_domain_identity_arn != "" ? 1 : 0
+  name  = "${var.project}-${var.environment}-lambda-ses"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = [var.ses_domain_identity_arn]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_ses" {
+  count      = var.ses_domain_identity_arn != "" ? 1 : 0
+  role       = aws_iam_role.lambda.name
+  policy_arn = aws_iam_policy.lambda_ses[0].arn
+}
+
 # -----------------------------------------------------------------------------
 # SSM Parameter Store: 시크릿 암호화 저장
 # Lambda 환경변수에 평문 대신 SSM 파라미터 이름만 전달
@@ -250,6 +276,11 @@ resource "aws_lambda_function" "backend" {
       # WebSocket 푸시 설정 (WebSocket 모듈 배포 시 값이 설정됨)
       WS_DYNAMODB_TABLE  = var.ws_dynamodb_table_name
       WS_API_GW_ENDPOINT = var.ws_api_gw_endpoint
+
+      # 이메일 발송 (SES)
+      EMAIL_BACKEND = var.ses_domain_identity_arn != "" ? "ses" : "smtp"
+      EMAIL_FROM    = var.email_from
+      FRONTEND_URL  = var.frontend_url
 
       # Lambda 환경 표시
       AWS_LAMBDA_EXEC = "true"

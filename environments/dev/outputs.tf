@@ -100,6 +100,12 @@ output "frontend_url" {
   value       = module.cloudfront.custom_domain_url
 }
 
+# SES
+output "ses_domain_identity_arn" {
+  description = "SES Domain Identity ARN"
+  value       = module.ses.domain_identity_arn
+}
+
 # WebSocket
 output "ws_api_endpoint" {
   description = "WebSocket API endpoint"
