@@ -2,7 +2,7 @@
 
 커뮤니티 포럼 "아무 말 대잔치"의 AWS 인프라를 Terraform으로 관리하는 저장소입니다.
 
-18개의 재사용 가능한 Terraform 모듈로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다. ECS/EKS 대신 서버리스 아키텍처(CloudFront + Lambda + API Gateway)를 채택하여 운영 부담을 최소화하고, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다. 콜드 스타트는 Prod의 Provisioned Concurrency(5)로 완화합니다.
+19개의 재사용 가능한 Terraform 모듈로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다. ECS/EKS 대신 서버리스 아키텍처(CloudFront + Lambda + API Gateway)를 채택하여 운영 부담을 최소화하고, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다. 콜드 스타트는 Prod의 Provisioned Concurrency(5)로 완화합니다.
 
 ## 목표 (Goals)
 
@@ -71,6 +71,7 @@ flowchart TD
         IAM["IAM — 관리자 사용자/그룹/정책"]
         ACM["ACM — SSL 인증서 (ap-northeast-2 + us-east-1)"]
         R53["Route 53 — DNS (my-community.shop)"]
+        SES["SES — 이메일 발송 (인증·비밀번호 초기화)"]
         CW["CloudWatch — 알람 + 대시보드"]
         CT["CloudTrail — API 감사 로그"]
     end
@@ -105,6 +106,9 @@ flowchart LR
     ACM --> WS_APIGW
     Route53 --> WS_APIGW
 
+    Route53 --> SES
+    SES --> Lambda
+
     S3 --> CloudTrail
     S3 --> CloudFront
 
@@ -112,9 +116,9 @@ flowchart LR
     Route53 --> CloudFront
 ```
 
-배포 순서: IAM → VPC → S3 → Route 53 → ACM → ECR → RDS → EFS → Lambda → API Gateway → DynamoDB → WebSocket Lambda → WebSocket API Gateway → CloudWatch → EC2 → CloudTrail → ACM (us-east-1) → CloudFront
+배포 순서: IAM → VPC → S3 → Route 53 → ACM → SES → ECR → RDS → EFS → Lambda → API Gateway → DynamoDB → WebSocket Lambda → WebSocket API Gateway → CloudWatch → EC2 → CloudTrail → ACM (us-east-1) → CloudFront
 
-### 2. 모듈 설계 (18개)
+### 2. 모듈 설계 (19개)
 
 | # | 모듈 | 설명 | 주요 리소스 |
 |---|------|------|-------------|
@@ -123,20 +127,21 @@ flowchart LR
 | 2 | `s3` | 프론트엔드 호스팅 + 로그 저장 | S3 Bucket (website, logs) |
 | 3 | `route53` | DNS 호스팅 영역 | Hosted Zone |
 | 4 | `acm` | SSL 인증서 (API Gateway용) | ACM Certificate |
-| 5 | `ecr` | 컨테이너 이미지 레지스트리 | ECR Repository |
-| 6 | `rds` | MySQL 데이터베이스 | RDS Instance, Subnet Group |
-| 7 | `efs` | 파일 업로드 스토리지 | EFS File System, Access Point |
-| 8 | `lambda` | 백엔드 함수 | Lambda Function, IAM Role |
-| 9 | `api_gateway` | API 라우팅 + 커스텀 도메인 | HTTP API, Stage, Domain |
-| 10 | `cloudwatch` | 모니터링 | Alarms, Dashboard |
-| 11 | `ec2` | Bastion Host | EC2 Instance, EIP, Key Pair |
-| 12 | `cloudtrail` | 감사 로그 | CloudTrail |
-| 13 | `acm` (us-east-1) | SSL 인증서 (CloudFront용) | ACM Certificate |
-| 14 | `cloudfront` | CDN + HTTPS + Clean URL | Distribution, Function |
-| 15 | `dynamodb` | WebSocket 연결 저장소 | DynamoDB Table (ws_connections) |
-| 16 | `api_gateway_websocket` | WebSocket API 라우팅 | WebSocket API, Stage |
-| 17 | `lambda_websocket` | WebSocket 핸들러 | Lambda Function (ZIP), IAM Role |
-| 18 | `tfstate` | Terraform 원격 상태 백엔드 | S3 Bucket, DynamoDB Table |
+| 5 | `ses` | 이메일 발송 (인증·비밀번호 초기화) | SES Domain Identity, DKIM |
+| 6 | `ecr` | 컨테이너 이미지 레지스트리 | ECR Repository |
+| 7 | `rds` | MySQL 데이터베이스 | RDS Instance, Subnet Group |
+| 8 | `efs` | 파일 업로드 스토리지 | EFS File System, Access Point |
+| 9 | `lambda` | 백엔드 함수 | Lambda Function, IAM Role |
+| 10 | `api_gateway` | API 라우팅 + 커스텀 도메인 | HTTP API, Stage, Domain |
+| 11 | `cloudwatch` | 모니터링 | Alarms, Dashboard |
+| 12 | `ec2` | Bastion Host | EC2 Instance, EIP, Key Pair |
+| 13 | `cloudtrail` | 감사 로그 | CloudTrail |
+| 14 | `acm` (us-east-1) | SSL 인증서 (CloudFront용) | ACM Certificate |
+| 15 | `cloudfront` | CDN + HTTPS + Clean URL | Distribution, Function |
+| 16 | `dynamodb` | WebSocket 연결 저장소 | DynamoDB Table (ws_connections) |
+| 17 | `api_gateway_websocket` | WebSocket API 라우팅 | WebSocket API, Stage |
+| 18 | `lambda_websocket` | WebSocket 핸들러 | Lambda Function (ZIP), IAM Role |
+| 19 | `tfstate` | Terraform 원격 상태 백엔드 | S3 Bucket, DynamoDB Table |
 
 #### 디렉토리 구조
 
@@ -148,6 +153,7 @@ flowchart LR
 │   ├── s3/
 │   ├── route53/
 │   ├── acm/
+│   ├── ses/
 │   ├── ecr/
 │   ├── rds/
 │   ├── efs/
@@ -254,6 +260,9 @@ Lambda 환경변수:
 - `HTTPS_ONLY=true` — Secure 쿠키 플래그
 - `WS_API_ENDPOINT` — WebSocket API Gateway Management API 엔드포인트
 - `WS_CONNECTIONS_TABLE` — DynamoDB 연결 테이블 이름
+- `EMAIL_BACKEND` — 이메일 발송 백엔드 (`ses` 또는 `smtp`)
+- `EMAIL_FROM` — 발신 이메일 주소 (`noreply@my-community.shop`)
+- `FRONTEND_URL` — 프론트엔드 URL (이메일 인증 링크용)
 
 #### RDS (데이터베이스)
 
@@ -324,6 +333,13 @@ CloudFront Function의 `routes` 맵은 프론트엔드 `constants.js`의 `HTML_P
 |------|------|--------|-----|
 | API Gateway | `ap-northeast-2` | `api.my-community.shop` | `my-community.shop` |
 | CloudFront | `us-east-1` | `my-community.shop` | — |
+
+#### SES (이메일 발송)
+
+- **도메인 인증**: `my-community.shop` (Route 53 TXT + DKIM CNAME 자동 생성)
+- **발신 주소**: `noreply@my-community.shop`
+- **용도**: 이메일 인증, 임시 비밀번호 발급
+- **Lambda 연동**: `enable_ses = true` 시 SES IAM 권한 + 환경변수 자동 설정
 
 ### 6. 보안 설계
 

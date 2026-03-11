@@ -1,6 +1,6 @@
 # 커뮤니티 서비스 "아무 말 대잔치" — 시스템 아키텍처 보고서
 
-> **작성일**: 2026-03-03
+> **작성일**: 2026-03-11
 > **프로젝트**: AWS AI School 2기 개인 프로젝트
 > **도메인**: my-community.shop
 > **리전**: ap-northeast-2 (서울)
@@ -34,11 +34,11 @@
 
 | 계층 | 기술 | 선택 근거 | 운영 고려사항 |
 | ------ | ------ | ----------- | ------------- |
-| **프론트엔드** | Vanilla JavaScript (MPA) + Vite | 프레임워크 없이 JS 기본기 학습, Vite로 번들링 | S3 + CloudFront로 정적 배포, 해시된 에셋 장기 캐싱. 프로덕션 의존성: marked(마크다운), DOMPurify(XSS), highlight.js(구문 강조) |
+| **프론트엔드** | Vanilla JavaScript (MPA, Vite 빌드) | 프레임워크 없이 JS 기본기 학습 | S3 + CloudFront로 정적 배포, 서버 부하 0 |
 | **백엔드** | FastAPI (Python 3.13) | 비동기 I/O, 자동 API 문서화 | Lambda 컨테이너 실행, 콜드 스타트 영향 |
 | **데이터베이스** | MySQL 8.0 (aiomysql) | FULLTEXT 검색(ngram), 트랜잭션 격리 | 커넥션 풀 관리, Lambda 스케일링 시 폭발 위험 |
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, 만료 토큰 주기적 정리 |
-| **인프라** | AWS (Terraform 18개 모듈) | 서버리스 아키텍처, IaC 재현성 | 3개 환경(Dev/Staging/Prod) 차등 설계 |
+| **인프라** | AWS (Terraform 19개 모듈) | 서버리스 아키텍처, IaC 재현성 | 3개 환경(Dev/Staging/Prod) 차등 설계 |
 | **CI/CD** | GitHub Actions + OIDC | 장기 자격 증명 없는 배포 | Blue/Green 배포 (Lambda Alias), Health check 게이트, 롤백 워크플로우 |
 | **부하 테스트** | Locust (gevent 기반) | 3종 사용자 시나리오 | 병목 사전 식별, 50~200 동시 사용자 검증 완료 |
 
@@ -54,9 +54,9 @@
 | **실시간 알림** (WebSocket 푸시 + 폴링 폴백) | WebSocket 연결 관리, 상태 저장소 필요 | DynamoDB 연결 매핑 + API GW Management API, 폴링 자동 폴백 |
 | **인증 토큰 관리** (JWT 발급·갱신·폐기) | 토큰 저장소 정합성, 브루트포스 방어 | DB 행 잠금, Rate Limiting (분산 환경 한계 존재) |
 | **동시 쓰기** (좋아요·북마크·댓글 동시 요청) | 경쟁 상태 방지, 트랜잭션 격리 | UNIQUE 제약, READ COMMITTED 격리 수준 |
-| **계정 정지** (관리자 기간 정지 + 신고 연동) | 정지 상태 3중 검증 (로그인·토큰·갱신) | `suspended_until` 시간 비교, 자동 해제 (배치 불필요) |
-| **마크다운 렌더링** (게시글·댓글 GFM + 코드 강조) | HTML 삽입에 따른 XSS 벡터 차단 | DOMPurify 라이브러리 sanitize, 단일 진입점(`renderMarkdown`) |
-| **DM 쪽지** (1:1 비공개 메시지) | 실시간 전달, 차단 연동 | WebSocket `type: "dm"` 푸시, 참가자 정규화 UNIQUE 제약 |
+| **계정 정지** (관리자 기간 정지, 신고 연동) | 인증 체인 차단, 자동 만료 | 3중 체크 (로그인·토큰·API), `suspended_until` 비교 |
+| **마크다운 렌더링** (marked + DOMPurify + highlight.js) | XSS 방지, 번들 크기 관리 | DOMPurify sanitize → `<template>.innerHTML` 패턴, 코드 스플릿 ~46KB |
+| **DM 쪽지** (1:1 비공개 메시지, WebSocket 푸시) | 대화 정규화, soft delete, 차단 연동 | MIN/MAX 참가자 UNIQUE 제약, `last_message_at` 비정규화, MarkdownEditor 컴팩트 모드 |
 
 ---
 
@@ -98,13 +98,14 @@ flowchart TD
         RDS["RDS MySQL 8.0<br/>Multi-AZ Prod · gp3"]
         EFS["EFS<br/>/mnt/uploads"]
         SSM["SSM<br/>SecureString"]
-        DDB["DynamoDB<br/>ws_connections"]
+        DDB["DynamoDB<br/>ws_connections · rate_limit"]
     end
 
     subgraph Ops["운영"]
         direction LR
         CW["CloudWatch<br/>6 Alarms · Dashboard"]
         CT["CloudTrail<br/>Multi-Region"]
+        EB["EventBridge<br/>스케줄 규칙"]
     end
 
     subgraph Deploy["배포"]
@@ -125,8 +126,10 @@ flowchart TD
     Lambda -- "비동기 DB 커넥션 풀<br/>5~50개" --> RDS
     Lambda -- "파일 시스템 마운트" --> EFS
     Lambda -. "콜드 스타트 시<br/>시크릿 조회" .-> SSM
+    Lambda -- "이메일 발송<br/>(인증·비밀번호)" --> SES["SES<br/>noreply@my-community.shop"]
     Lambda -- "알림 푸시<br/>ManageConnections" --> APIGW_WS
     Lambda -- "연결 조회" --> DDB
+    EB -. "토큰 정리 · 피드 재계산<br/>(1시간 · 30분 주기)" .-> Lambda
     Lambda_WS -- "연결 매핑" --> DDB
 
     Lambda -. "Metrics · Logs" .-> CW
@@ -156,8 +159,11 @@ flowchart TD
 | **RDS** | MySQL 8.0 관계형 데이터 저장 | FULLTEXT 검색(ngram), 트랜잭션 ACID 보장, Private Subnet 격리 |
 | **EFS** | 사용자 업로드 파일 저장 | Lambda의 읽기 전용 파일시스템 제약 해결, 3-AZ 자동 복제 |
 | **SSM** | DB 비밀번호, JWT 시크릿 키 관리 | Lambda 환경변수에 평문 저장 방지, SecureString 암호화 |
+| **SES** | 이메일 인증, 임시 비밀번호 발송 | 도메인 인증(DKIM), Lambda IAM 연동, 프로덕션 이메일 배달 |
 | **CloudWatch** | 메트릭 알람, 대시보드, 로그 집계 | Lambda 에러, RDS CPU, 스토리지, 커넥션 수 실시간 모니터링 |
 | **CloudTrail** | AWS API 호출 감사 로그 | 멀티리전 추적으로 us-east-1(CloudFront/ACM) 이벤트 포함 |
+| **EventBridge** | 스케줄 기반 배치 작업 트리거 | API Destination + Connection으로 Lambda 내부 API 호출, 토큰 정리(1시간)·피드 재계산(30분) |
+| **DynamoDB** | WebSocket 연결 매핑 + 분산 Rate Limiter | ws_connections(실시간 알림), rate_limit(Fixed Window Counter, TTL 자동 만료) |
 
 #### API Gateway — Lambda 프록시 통합 (AWS_PROXY)
 
@@ -346,8 +352,7 @@ sequenceDiagram
         Lambda->>RDS: 이메일로 사용자 조회 (파라미터화 쿼리)
         RDS-->>Lambda: 사용자 레코드
         Lambda->>Lambda: 비밀번호 검증 (bcrypt, 별도 스레드)
-        Lambda->>Lambda: 계정 정지 확인 (suspended_until > NOW?)
-        Note right of Lambda: 정지 중이면 403 반환<br/>(해제 예정일 + 사유 포함)
+        Lambda->>Lambda: 계정 정지 확인 (suspended_until > NOW → 403)
         Lambda->>Lambda: JWT Access Token 생성 (HS256, 30분)
         Lambda->>Lambda: Refresh Token 생성 (무작위 문자열)
         Lambda->>RDS: INSERT refresh_token (SHA-256 해시)
@@ -359,9 +364,8 @@ sequenceDiagram
         Client->>APIGW: GET /v1/posts (Bearer 토큰 포함)
         APIGW->>Lambda: 프록시 통합
         Lambda->>Lambda: JWT 토큰 디코딩 + 서명 검증
-        Lambda->>RDS: 사용자 존재 확인 (탈퇴·정지 여부 포함)
-        Note right of Lambda: 정지 중이면 403 반환<br/>(프론트엔드가 auth:account-suspended<br/>이벤트 발생 → 로그인 페이지 이동)
-        Lambda-->>Client: 200 OK + 데이터
+        Lambda->>RDS: 사용자 존재 확인 (탈퇴 여부 + 정지 상태 포함)
+        Lambda-->>Client: 200 OK + 데이터 (정지 시 403)
     end
 
     rect rgb(240, 255, 240)
@@ -445,18 +449,21 @@ flowchart LR
 | **DNS** | Route 53 | 도메인 관리, ACM DNS 검증 |
 | **SSL** | ACM (서울 + 버지니아) | API Gateway용 + CloudFront용 인증서 |
 | **API 라우팅** | API Gateway (HTTP API) | CORS, Lambda 프록시, 접근 로깅 |
+| **실시간 알림** | API Gateway (WebSocket API) + DynamoDB (ws_connections) | WebSocket 연결 관리, 실시간 이벤트 푸시 |
 | **컴퓨팅** | Lambda (Container Image) | FastAPI + Mangum 실행 |
 | **컨테이너 레지스트리** | ECR | Docker 이미지 저장, 라이프사이클 관리 |
 | **데이터베이스** | RDS MySQL 8.0 (gp3) | 관계형 데이터, FULLTEXT 검색 |
 | **파일 스토리지** | EFS (범용 모드) | 사용자 업로드 이미지 |
 | **시크릿 관리** | SSM Parameter Store | DB 비밀번호, JWT 시크릿 (암호화 저장) |
+| **이메일** | SES (Simple Email Service) | 이메일 인증, 임시 비밀번호 발급 (도메인 DKIM 인증) |
 | **모니터링** | CloudWatch | 6개 알람, 4개 위젯 대시보드 |
 | **감사** | CloudTrail (멀티리전) | AWS API 호출 로그 |
 | **접근 관리** | IAM (MFA 강제) | 최소 권한 원칙, OIDC 역할 |
 | **네트워크** | VPC (2-AZ) | Private Subnet 격리, NAT Gateway |
 | **배포** | GitHub Actions + OIDC | 장기 자격 증명 없는 CI/CD |
-| **실시간 알림** | API Gateway (WebSocket API) + DynamoDB | WebSocket 연결 관리, 실시간 이벤트 푸시 |
-| **IaC** | Terraform (>= 1.5.0) | 18개 모듈, 3개 환경 |
+| **배치 작업** | EventBridge (스케줄 규칙 + API Destination) | 토큰 정리(1시간), 피드 점수 재계산(30분) |
+| **분산 Rate Limiting** | DynamoDB (rate_limit 테이블) | Fixed Window Counter, TTL 자동 만료, fail-open 정책 |
+| **IaC** | Terraform (>= 1.5.0) | 19개 모듈, 3개 환경 |
 
 ---
 
@@ -540,16 +547,16 @@ Lambda 인스턴스 수 × 풀 최대 크기 = 잠재적 DB 커넥션 수
       20        ×    50     =     1,000 (RDS 한도 초과!)
 ```
 
-#### 3.2.3 인메모리 Rate Limiter의 분산 환경 한계
+#### 3.2.3 Rate Limiter의 분산 환경 한계
 
-현재 Rate Limiter는 각 Lambda 인스턴스의 메모리에 독립적으로 동작합니다.
+Rate Limiter는 로컬(인메모리)과 분산(DynamoDB) 두 가지 백엔드를 지원합니다. 프로덕션에서는 DynamoDB Fixed Window Counter를 사용하여 Lambda 인스턴스 간 상태를 공유하지만, DynamoDB 장애 시 fail-open 정책으로 요청을 허용합니다.
 
-| 설계 | 단일 인스턴스 | 다중 인스턴스 (N개) |
-| ------ | ------------- | ------------------- |
-| 로그인 제한 | 5회/60초 | 5 × N회/60초 (실질적) |
-| 게시글 작성 | 10회/60초 | 10 × N회/60초 (실질적) |
+| 설계 | 인메모리 (로컬) | DynamoDB (프로덕션) | 잔여 한계 |
+| ------ | ------------- | ------------------- | --------- |
+| 로그인 제한 | 5 × N회/60초 (인스턴스별) | 5회/60초 (전역) | DynamoDB 장애 시 fail-open |
+| 게시글 작성 | 10 × N회/60초 (인스턴스별) | 10회/60초 (전역) | DynamoDB 장애 시 fail-open |
 
-**영향**: Lambda 인스턴스가 10개로 스케일 아웃되면 로그인 브루트포스 공격에 실질적으로 50회/60초까지 허용됩니다.
+**영향**: DynamoDB 백엔드 도입으로 정상 상황에서는 정확한 전역 제한이 가능하지만, DynamoDB 장애 시에는 가용성 우선(fail-open)으로 제한이 무효화됩니다. WAF 등 상위 계층 방어를 추가하면 이 잔여 위험을 완화할 수 있습니다.
 
 #### 3.2.4 EFS 처리량 한계
 
@@ -1023,11 +1030,12 @@ flowchart TD
 | 강점 | 설명 |
 | ------ | ------ |
 | **완전 서버리스** | Lambda + API Gateway로 서버 관리 부담 제거, 유휴 시 비용 0 |
-| **IaC 완전 관리** | Terraform 18개 모듈로 전체 인프라 코드화, 환경 재현 가능 |
+| **IaC 완전 관리** | Terraform 19개 모듈로 전체 인프라 코드화, 환경 재현 가능 |
 | **보안 계층화** | VPC 격리, SSM 시크릿, OIDC 배포, MFA 강제, OAC 전용 S3 |
 | **환경별 차등 설계** | Dev(비용 최소) → Staging(중간) → Prod(HA 강화) 단계적 구성 |
 | **모니터링 기반** | CloudWatch 6개 알람 + 4개 위젯 대시보드 + CloudTrail 감사 |
 | **배포 안전성** | Blue/Green 배포로 Health check 통과 후에만 트래픽 전환, 실패 시 자동 유지 + 수동 롤백 워크플로우 |
+| **수평 확장 지원** | 분산 Rate Limiter(DynamoDB) + EventBridge 배치 작업으로 다중 인스턴스 환경 대응 |
 | **비용 효율** | Free Tier 활용(t3.micro), 단일 NAT(Dev), Provisioned Concurrency 최소화 |
 
 ### 5.2 현재 아키텍처의 약점
@@ -1035,7 +1043,7 @@ flowchart TD
 | 약점 | 영향 | 위험 시점 | 심각도 |
 | ------ | ------ | ---------- | -------- |
 | DB 커넥션 폭발 위험 | Lambda 스케일 아웃 시 RDS 커넥션 한도 초과 | Lambda 20+ 동시 인스턴스 | 높음 |
-| 인메모리 Rate Limiter | 분산 환경에서 브루트포스 방어 약화 | Lambda 10+ 인스턴스 (DAU 300+) | 높음 |
+| Rate Limiter fail-open | DynamoDB 장애 시 제한 무효화 (가용성 우선 정책) | DynamoDB 서비스 장애 시 | 중간 |
 | EFS 백업 미설정 | 사용자 업로드 이미지 복구 불가 | **즉시** (데이터 손실 시 복구 수단 없음) | 높음 |
 | SNS 알림 미설정 | 장애 발생 시 대시보드 수동 확인 필요 | **즉시** (야간 장애 시 인지 지연) | 중간 |
 | 캐싱 부재 | 반복 조회(게시글 목록 등) 매번 DB 접근 | DAU 300+ (일일 30,000+ 요청) | 중간 |
@@ -1066,7 +1074,7 @@ flowchart TD
 | ElastiCache (Redis) | 게시글 목록/인기 게시글 캐싱 | DB 부하 80% 감소 (읽기) |
 | RDS Read Replica | 읽기 전용 복제본 추가 | 쓰기/읽기 분리, DB 성능 2배 |
 | CloudFront API 캐싱 | GET /v1/posts 엣지 캐싱 (TTL 30초) | API 응답 속도 개선, Lambda 호출 감소 |
-| 분산 Rate Limiter | Redis 기반 중앙화 Rate Limiter | 멀티 인스턴스 환경에서 정확한 제한 |
+| ~~분산 Rate Limiter~~ | ~~DynamoDB 기반 분산 Rate Limiter~~ | ~~구현 완료~~ (Fixed Window Counter + TTL, fail-open 정책) |
 
 #### 장기 (Stage 3: DAU 30,000)
 

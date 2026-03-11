@@ -2,6 +2,12 @@
 
 ## 2026-03 (Mar)
 
+- **03-11: SES 이메일 발송 모듈 추가**
+  - `modules/ses/`: 신규 모듈 — SES 도메인 인증 (Route 53 TXT + DKIM CNAME 자동 생성)
+  - `modules/lambda/`: SES IAM 권한 (`ses:SendEmail`, `ses:SendRawEmail`) + `EMAIL_BACKEND`/`EMAIL_FROM`/`FRONTEND_URL` 환경변수
+  - `bootstrap/oidc.tf`: SES 관리 IAM 권한 + `iam:TagPolicy` 권한 추가
+  - 3개 환경(dev/staging/prod) `main.tf`에 SES 모듈 연결
+
 - **03-10: CloudFront Function 라우트 동기화**
   - 프론트엔드 `HTML_PATHS`와 CloudFront Function `routes` 맵 동기화 (10개 → 19개)
   - 누락 라우트 추가: 알림, 내 활동, 이메일 인증, 사용자 프로필, 관리자 페이지, DM 페이지
