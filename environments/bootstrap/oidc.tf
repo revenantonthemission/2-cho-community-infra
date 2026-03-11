@@ -404,6 +404,18 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Resource = "*"
       },
       {
+        Sid    = "SESManagement"
+        Effect = "Allow"
+        Action = [
+          "ses:VerifyDomainIdentity", "ses:VerifyDomainDkim",
+          "ses:GetIdentityVerificationAttributes", "ses:GetIdentityDkimAttributes",
+          "ses:DeleteIdentity", "ses:ListIdentities",
+          "ses:GetAccountSendingEnabled", "ses:GetSendQuota",
+          "ses:SetIdentityDkimEnabled"
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "CloudWatchAndLogs"
         Effect = "Allow"
         Action = [
