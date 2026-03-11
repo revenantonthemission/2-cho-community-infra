@@ -370,7 +370,7 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Action = [
           "iam:GetPolicy", "iam:CreatePolicy", "iam:DeletePolicy",
           "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
-          "iam:ListPolicyVersions"
+          "iam:ListPolicyVersions", "iam:TagPolicy", "iam:UntagPolicy", "iam:ListPolicyTags"
         ]
         Resource = [
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project}-*"
