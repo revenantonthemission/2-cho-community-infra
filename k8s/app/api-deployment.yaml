@@ -13,9 +13,11 @@ spec:
       labels:
         app: community-api
     spec:
+      imagePullSecrets:
+        - name: ecr-cred
       containers:
         - name: community-api
-          image: PLACEHOLDER_ECR/my-community-dev-backend-k8s:latest
+          image: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-dev-backend-k8s:latest
           ports:
             - containerPort: 8000
           envFrom:

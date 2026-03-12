@@ -7,6 +7,9 @@ spec:
     storage: 20Gi
   accessModes:
     - ReadWriteOnce
+  claimRef:
+    namespace: data
+    name: mysql-data
   persistentVolumeReclaimPolicy: Retain
   storageClassName: local-storage
   local:
@@ -18,4 +21,4 @@ spec:
             - key: kubernetes.io/hostname
               operator: In
               values:
-                - <worker-2-hostname>  # terraform apply 후 치환
+                - ip-10-0-1-23.ap-northeast-2.compute.internal

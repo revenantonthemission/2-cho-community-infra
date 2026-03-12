@@ -89,6 +89,10 @@ module "s3" {
 
   cloudtrail_log_retention_days = var.cloudtrail_log_retention_days
 
+  # 업로드 S3 버킷 (K8s 환경에서 사용)
+  create_uploads_bucket = true
+  uploads_cors_origins  = ["https://k8s.my-community.shop"]
+
   tags = local.common_tags
 }
 
@@ -469,10 +473,13 @@ module "k8s_ec2" {
   environment = var.environment
 
   vpc_id            = module.vpc.vpc_id
-  public_subnet_ids = module.vpc.public_subnet_ids
+  # c7i-flex.large는 ap-northeast-2a 미지원 → 2b 서브넷만 전달
+  public_subnet_ids = [module.vpc.public_subnet_ids[1]]
 
   ssh_key_name      = var.k8s_ssh_key_name
   allowed_ssh_cidrs = var.k8s_allowed_ssh_cidrs
+
+  s3_uploads_bucket_arn = module.s3.uploads_bucket_arn
 
   tags = local.common_tags
 }

@@ -39,6 +39,7 @@ resource "aws_instance" "master" {
   subnet_id              = var.public_subnet_ids[0]
   vpc_security_group_ids = local.master_sg_ids
   iam_instance_profile   = aws_iam_instance_profile.k8s_node.name
+  source_dest_check      = false # Calico Pod 네트워크 직접 라우팅
 
   user_data = templatefile("${path.module}/userdata.sh", {
     kubernetes_version = var.kubernetes_version
@@ -76,6 +77,7 @@ resource "aws_instance" "worker" {
   subnet_id              = var.public_subnet_ids[count.index % length(var.public_subnet_ids)]
   vpc_security_group_ids = local.worker_sg_ids
   iam_instance_profile   = aws_iam_instance_profile.k8s_node.name
+  source_dest_check      = false # Calico Pod 네트워크 직접 라우팅
 
   user_data = templatefile("${path.module}/userdata.sh", {
     kubernetes_version = var.kubernetes_version

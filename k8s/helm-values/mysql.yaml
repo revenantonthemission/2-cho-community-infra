@@ -6,7 +6,7 @@ auth:
 primary:
   persistence:
     size: 20Gi
-    storageClassName: local-storage
+    storageClass: local-storage
   resources:
     requests:
       cpu: 250m

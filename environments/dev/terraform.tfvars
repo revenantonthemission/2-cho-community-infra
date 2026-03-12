@@ -59,3 +59,6 @@ bastion_ssh_public_key = ""         # -var 플래그 또는 secret.tfvars로 설
 
 # CloudWatch (Free Tier: 10 알람, 5GB 로그)
 cloudwatch_log_retention_days = 7
+
+# K8s 클러스터
+create_k8s_cluster = true

@@ -13,9 +13,11 @@ spec:
       labels:
         app: community-ws
     spec:
+      imagePullSecrets:
+        - name: ecr-cred
       containers:
         - name: community-ws
-          image: PLACEHOLDER_ECR/my-community-dev-backend-k8s:latest
+          image: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-dev-backend-k8s:latest
           command: ["uv", "run", "uvicorn", "ws_app:app", "--host", "0.0.0.0", "--port", "8001"]
           ports:
             - containerPort: 8001

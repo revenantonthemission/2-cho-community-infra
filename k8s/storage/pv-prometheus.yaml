@@ -7,6 +7,9 @@ spec:
     storage: 10Gi
   accessModes:
     - ReadWriteOnce
+  claimRef:
+    namespace: monitoring
+    name: prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-0
   persistentVolumeReclaimPolicy: Retain
   storageClassName: local-storage
   local:
@@ -18,4 +21,4 @@ spec:
             - key: kubernetes.io/hostname
               operator: In
               values:
-                - <worker-2-hostname>  # terraform apply 후 치환
+                - ip-10-0-1-23.ap-northeast-2.compute.internal

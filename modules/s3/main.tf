@@ -119,3 +119,70 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail_logs" 
     }
   }
 }
+
+# -----------------------------------------------------------------------------
+# Uploads Bucket (사용자 업로드 이미지: 프로필, 게시글)
+# -----------------------------------------------------------------------------
+resource "aws_s3_bucket" "uploads" {
+  count  = var.create_uploads_bucket ? 1 : 0
+  bucket = "${var.project}-${var.environment}-uploads"
+
+  tags = merge(var.tags, {
+    Name = "${var.project}-${var.environment}-uploads"
+  })
+}
+
+resource "aws_s3_bucket_public_access_block" "uploads" {
+  count  = var.create_uploads_bucket ? 1 : 0
+  bucket = aws_s3_bucket.uploads[0].id
+
+  block_public_acls       = true
+  block_public_policy     = false  # 버킷 정책으로 공개 읽기 허용
+  ignore_public_acls      = true
+  restrict_public_buckets = false  # 공개 읽기 정책 허용
+}
+
+# 업로드 파일 공개 읽기 정책 (이미지는 공개 콘텐츠)
+resource "aws_s3_bucket_policy" "uploads" {
+  count  = var.create_uploads_bucket ? 1 : 0
+  bucket = aws_s3_bucket.uploads[0].id
+
+  depends_on = [aws_s3_bucket_public_access_block.uploads]
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "PublicReadUploads"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.uploads[0].arn}/*"
+      }
+    ]
+  })
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
+  count  = var.create_uploads_bucket ? 1 : 0
+  bucket = aws_s3_bucket.uploads[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# CORS: 프론트엔드에서 이미지 로드 허용
+resource "aws_s3_bucket_cors_configuration" "uploads" {
+  count  = var.create_uploads_bucket ? 1 : 0
+  bucket = aws_s3_bucket.uploads[0].id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET"]
+    allowed_origins = var.uploads_cors_origins
+    max_age_seconds = 3600
+  }
+}
