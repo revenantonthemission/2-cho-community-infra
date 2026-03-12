@@ -18,7 +18,7 @@ single_nat_gateway = true # dev: NAT GW 1개 (~$32/month 고정 비용 주의)
 
 # Bastion SSH 허용 IP (본인 IP로 변경 필요)
 # 예: bastion_allowed_cidrs = ["203.0.113.0/32"]
-bastion_allowed_cidrs = []  # -var 플래그 또는 secret.tfvars로 설정
+bastion_allowed_cidrs = [] # -var 플래그 또는 secret.tfvars로 설정
 
 # S3
 # allow_credentials=true 시 와일드카드 불가
@@ -55,7 +55,7 @@ lambda_log_retention_days      = 7
 
 # EC2 (Free Tier: t2.micro 또는 t3.micro, 750시간/월)
 bastion_instance_type  = "t3.micro" # t4g는 Free Tier 아님!
-bastion_ssh_public_key = ""  # -var 플래그 또는 secret.tfvars로 설정
+bastion_ssh_public_key = ""         # -var 플래그 또는 secret.tfvars로 설정
 
 # CloudWatch (Free Tier: 10 알람, 5GB 로그)
 cloudwatch_log_retention_days = 7

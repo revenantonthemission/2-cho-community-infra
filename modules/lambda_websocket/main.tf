@@ -132,7 +132,7 @@ resource "aws_lambda_function" "websocket" {
       DYNAMODB_TABLE      = var.dynamodb_table_name
       SECRET_KEY_SSM_NAME = var.secret_key_ssm_name
       WS_API_ENDPOINT     = var.ws_api_endpoint
-      AUTH_TIMEOUT_SEC     = "10"
+      AUTH_TIMEOUT_SEC    = "10"
     }
   }
 
