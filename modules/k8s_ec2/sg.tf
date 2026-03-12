@@ -6,13 +6,13 @@ resource "aws_security_group" "k8s_master" {
   description = "K8s master node - API server, etcd, kubelet"
   vpc_id      = var.vpc_id
 
-  # API Server
+  # API Server (관리자 IP + 노드 간 통신은 k8s_internal SG에서 처리)
   ingress {
     description = "Kubernetes API server"
     from_port   = 6443
     to_port     = 6443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.allowed_ssh_cidrs
   }
 
   # etcd (Master 자체 + 다른 Master)
@@ -63,15 +63,6 @@ resource "aws_security_group" "k8s_worker" {
     to_port         = 10250
     protocol        = "tcp"
     security_groups = [aws_security_group.k8s_master.id]
-  }
-
-  # NodePort 범위
-  ingress {
-    description = "NodePort services"
-    from_port   = 30000
-    to_port     = 32767
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
   }
 
   # HTTP (Ingress Controller hostNetwork)

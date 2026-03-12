@@ -55,6 +55,9 @@ EOF
 
 # 7. 데이터 디렉토리 생성 (Worker 노드용)
 mkdir -p /data/mysql /data/redis /data/prometheus /data/uploads
-chmod 777 /data/mysql /data/redis /data/prometheus /data/uploads
+# bitnami MySQL/Redis: UID 1001, Prometheus: UID 65534
+chown 1001:1001 /data/mysql /data/redis
+chown 65534:65534 /data/prometheus
+chmod 755 /data/mysql /data/redis /data/prometheus /data/uploads
 
 echo "K8s node setup complete. Run kubeadm init (master) or kubeadm join (worker) manually."
