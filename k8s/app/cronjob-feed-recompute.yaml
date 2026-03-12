@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: feed-recompute
+  namespace: app
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: recompute
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  curl -sf -X POST \
+                    -H "X-Internal-Key: $INTERNAL_API_KEY" \
+                    http://community-api-svc.app.svc.cluster.local:8000/v1/admin/feed/recompute
+              envFrom:
+                - secretRef:
+                    name: community-secrets
+          restartPolicy: OnFailure

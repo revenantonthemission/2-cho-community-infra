@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: token-cleanup
+  namespace: app
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: cleanup
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  curl -sf -X POST \
+                    -H "X-Internal-Key: $INTERNAL_API_KEY" \
+                    http://community-api-svc.app.svc.cluster.local:8000/v1/admin/cleanup/tokens
+              envFrom:
+                - secretRef:
+                    name: community-secrets
+          restartPolicy: OnFailure
