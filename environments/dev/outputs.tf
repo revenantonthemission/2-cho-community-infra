@@ -121,3 +121,14 @@ output "dynamodb_table_name" {
   description = "WebSocket DynamoDB 테이블 이름"
   value       = module.dynamodb.table_name
 }
+
+# ─── K8s Cluster ────────────────────────────────
+output "k8s_master_public_ip" {
+  description = "K8s Master Elastic IP"
+  value       = var.create_k8s_cluster ? module.k8s_ec2[0].master_public_ip : null
+}
+
+output "k8s_worker_public_ips" {
+  description = "K8s Worker Public IPs"
+  value       = var.create_k8s_cluster ? module.k8s_ec2[0].worker_public_ips : null
+}

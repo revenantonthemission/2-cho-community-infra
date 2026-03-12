@@ -239,3 +239,24 @@ variable "cloudwatch_log_retention_days" {
   type        = number
   default     = 14
 }
+
+# =============================================================================
+# K8s Cluster
+# =============================================================================
+variable "k8s_ssh_key_name" {
+  description = "K8s 노드 SSH Key Pair 이름"
+  type        = string
+  default     = ""
+}
+
+variable "k8s_allowed_ssh_cidrs" {
+  description = "K8s 노드 SSH 접근 허용 CIDR"
+  type        = list(string)
+  default     = []
+}
+
+variable "create_k8s_cluster" {
+  description = "K8s 클러스터 EC2 생성 여부"
+  type        = bool
+  default     = false
+}
