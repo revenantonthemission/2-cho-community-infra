@@ -66,12 +66,17 @@ output "ses_domain_identity_arn" {
 }
 
 # K8s Cluster
-output "k8s_master_public_ip" {
-  description = "K8s Master Elastic IP"
-  value       = var.create_k8s_cluster ? module.k8s_ec2[0].master_public_ip : null
+output "k8s_master_public_ips" {
+  description = "K8s Master EIP 목록"
+  value       = var.create_k8s_cluster ? module.k8s_ec2[0].master_public_ips : []
 }
 
 output "k8s_worker_public_ips" {
-  description = "K8s Worker Public IPs"
-  value       = var.create_k8s_cluster ? module.k8s_ec2[0].worker_public_ips : null
+  description = "K8s Worker Public IP 목록"
+  value       = var.create_k8s_cluster ? module.k8s_ec2[0].worker_public_ips : []
+}
+
+output "k8s_haproxy_public_ip" {
+  description = "K8s HAProxy EIP"
+  value       = var.create_k8s_cluster ? module.k8s_ec2[0].haproxy_public_ip : null
 }
