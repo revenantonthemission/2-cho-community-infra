@@ -2,11 +2,48 @@
 
 ## 2026-03 (Mar)
 
+- **03-14: K8s HA 통합 아키텍처 설계 + 코드 구현**
+  - `modules/k8s_ec2/` HA 확장: `master_count`(1/3), `worker_count`, `haproxy_enabled` 변수 추가, count 기반 리소스 전환
+  - HAProxy L4 로드밸런서: TCP 6443 패스스루, `/healthz` 헬스체크, 전용 SG + userdata 자동 구성
+  - Staging/Prod `main.tf` 재작성: Lambda 모듈 → K8s EC2 + RDS 아키텍처
+  - Kustomize base/overlay 구조: 17개 base 매니페스트 + dev/staging/prod overlay (ConfigMap/Ingress 패치, images transformer)
+  - Helm Grafana values 환경별 분리 (`kube-prometheus-stack-{dev,staging,prod}.yaml`)
+  - `enable_s3_uploads` bool 변수 추가: ARN 기반 count 조건 → 새 환경 첫 apply 실패 수정
+  - CI/CD `deploy-k8s.yml` staging/prod 환경 옵션 + 동적 health check URL 추가
+  - Lambda-era 모듈 9개 deprecation 표기
+
+- **03-14: Lambda 인프라 제거 — K8s 전환 완료 (Dev)**
+  - Dev 환경에서 Lambda 기반 인프라 11개 모듈 제거 (67개 리소스 삭제)
+  - 제거 대상: `lambda`, `api_gateway`, `cloudfront`, `acm_cloudfront`, `lambda_websocket`, `api_gateway_websocket`, `dynamodb`, `eventbridge`, `efs`, `cloudwatch`, WebSocket 통합 리소스
+  - 메인 도메인 DNS(`my-community.shop`, `api`, `ws`) K8s Worker 노드로 통합
+  - S3 `uploads_cors_origins` 업데이트: K8s 서브도메인 → 메인 도메인
+  - ECR 추가 레포지토리를 `create_k8s_cluster` 조건에서 분리 (항상 생성)
+
+- **03-14: CI/CD 파이프라인 리포지토리별 분리**
+  - 기존: BE 리포에서 FE/BE 모두 배포 → 변경: 각 리포가 자체 `deploy-k8s.yml` 소유
+  - FE 리포: 독립 K8s 배포 워크플로우 신규 생성 (Docker build → ECR push → SSH kubectl rollout)
+  - BE 리포: FE 컴포넌트 제거, api/ws 전용으로 단순화
+  - 동적 Security Group 관리: SSH SG 규칙 추가 → 배포 → 규칙 제거 (보안 강화)
+
+- **03-13: K8s 운영 안정성 강화**
+  - MySQL 백업 CronJob: `mysqldump` → S3 업로드 (일일 자동 백업)
+  - NetworkPolicy 세분화: app↔data namespace 간 트래픽 제어, hostNetwork Ingress 대응 (`ipBlock` VPC CIDR)
+  - S3 스토리지 전환: EFS/hostPath → S3 (`STORAGE_BACKEND=s3`, IAM 역할 기반 인증)
+  - ECR 토큰 자동 갱신 CronJob 추가
+
+- **03-12: K8s 마이그레이션 구현 (Phase 1-5)**
+  - `modules/k8s_ec2/`: K8s 클러스터 Terraform 모듈 (Master 1 + Worker 2, c7i-flex.large)
+  - 보안 그룹 4종: k8s_master, k8s_worker, k8s_internal, k8s_ssh (조건부)
+  - IAM 역할: ECR Pull + S3 업로드 권한
+  - K8s 매니페스트 31개: Deployment, Service, Ingress, HPA, CronJob, PV/PVC, NetworkPolicy, ServiceMonitor
+  - Helm 차트 설정: cert-manager, ingress-nginx, MySQL, Redis, kube-prometheus-stack, metrics-server
+  - `source_dest_check = false` 설정 (Calico 직접 라우팅 필수)
+
 - **03-11: SES 이메일 발송 모듈 추가**
   - `modules/ses/`: 신규 모듈 — SES 도메인 인증 (Route 53 TXT + DKIM CNAME 자동 생성)
-  - `modules/lambda/`: SES IAM 권한 (`ses:SendEmail`, `ses:SendRawEmail`) + `EMAIL_BACKEND`/`EMAIL_FROM`/`FRONTEND_URL` 환경변수
+  - `modules/lambda/`: SES IAM 권한 + `EMAIL_BACKEND`/`EMAIL_FROM`/`FRONTEND_URL` 환경변수
   - `bootstrap/oidc.tf`: SES 관리 IAM 권한 + `iam:TagPolicy` 권한 추가
-  - 3개 환경(dev/staging/prod) `main.tf`에 SES 모듈 연결
+  - 3개 환경 `main.tf`에 SES 모듈 연결
 
 - **03-10: CloudFront Function 라우트 동기화**
   - 프론트엔드 `HTML_PATHS`와 CloudFront Function `routes` 맵 동기화 (10개 → 19개)
@@ -32,7 +69,7 @@
   - Lambda Alias `live` 추가 (`modules/lambda/main.tf`): API Gateway → Alias → Version N 구조
   - Provisioned Concurrency qualifier를 버전 → alias로 변경 (alias 전환 시 PC 자동 적용)
   - API Gateway Lambda permission에 `qualifier` + `create_before_destroy` 추가 (502 방지)
-  - 3개 환경(dev/staging/prod) `main.tf`에 alias ARN 연결
+  - 3개 환경 `main.tf`에 alias ARN 연결
   - `bootstrap/oidc.tf`에 Blue/Green IAM 권한 4개 추가
 
 ## 2026-02 (Feb)
