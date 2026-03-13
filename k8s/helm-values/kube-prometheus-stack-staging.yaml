@@ -1,0 +1,8 @@
+grafana:
+  ingress:
+    hosts:
+      - grafana-staging.my-community.shop
+    tls:
+      - secretName: grafana-tls-staging
+        hosts:
+          - grafana-staging.my-community.shop

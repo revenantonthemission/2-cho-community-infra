@@ -31,12 +31,6 @@ grafana:
     ingressClassName: nginx
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
-    hosts:
-      - grafana.k8s.my-community.shop
-    tls:
-      - secretName: grafana-tls
-        hosts:
-          - grafana.k8s.my-community.shop
 
 alertmanager:
   enabled: false
