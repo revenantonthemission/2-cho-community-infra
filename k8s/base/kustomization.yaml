@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespaces.yaml
+  - cert/clusterissuer.yaml
+  - network/networkpolicy-data.yaml
+  - storage/storageclass.yaml
+  - app/api-deployment.yaml
+  - app/api-service.yaml
+  - app/api-hpa.yaml
+  - app/api-servicemonitor.yaml
+  - app/fe-deployment.yaml
+  - app/fe-service.yaml
+  - app/ws-deployment.yaml
+  - app/ws-service.yaml
+  - app/ingress.yaml
+  - app/configmap.yaml
+  - app/networkpolicy.yaml
+  - app/cronjob-ecr-refresh.yaml
+  - app/cronjob-feed-recompute.yaml
+  - app/cronjob-token-cleanup.yaml

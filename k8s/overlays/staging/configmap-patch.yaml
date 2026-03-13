@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: community-config
+  namespace: app
+data:
+  DB_HOST: "<RDS_ENDPOINT>"
+  DB_USER: "admin"
+  DB_NAME: "community_service"
+  S3_UPLOADS_BUCKET: "my-community-staging-uploads"
+  S3_REGION: "ap-northeast-2"
+  ALLOWED_ORIGINS: '["https://staging.my-community.shop"]'
+  TRUSTED_PROXIES: '[]'
+  TESTING: "false"
+  DEBUG: "false"

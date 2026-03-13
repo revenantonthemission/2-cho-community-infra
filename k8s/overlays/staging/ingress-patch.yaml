@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: community-ingress
+  namespace: app
+spec:
+  tls:
+    - hosts:
+        - staging.my-community.shop
+        - api-staging.my-community.shop
+        - ws-staging.my-community.shop
+      secretName: community-tls-staging
+  rules:
+    - host: api-staging.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-api-svc
+                port:
+                  number: 8000
+    - host: staging.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-fe-svc
+                port:
+                  number: 80
+    - host: ws-staging.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-ws-svc
+                port:
+                  number: 8001

@@ -1,0 +1,80 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: community-ingress
+  namespace: app
+spec:
+  tls:
+    - hosts:
+        - api.k8s.my-community.shop
+        - k8s.my-community.shop
+        - ws.k8s.my-community.shop
+      secretName: community-tls
+    - hosts:
+        - my-community.shop
+        - api.my-community.shop
+        - ws.my-community.shop
+      secretName: community-main-tls
+  rules:
+    # 메인 도메인
+    - host: api.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-api-svc
+                port:
+                  number: 8000
+    - host: my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-fe-svc
+                port:
+                  number: 80
+    - host: ws.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-ws-svc
+                port:
+                  number: 8001
+    # K8s 서브도메인 (기존 유지)
+    - host: api.k8s.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-api-svc
+                port:
+                  number: 8000
+    - host: k8s.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-fe-svc
+                port:
+                  number: 80
+    - host: ws.k8s.my-community.shop
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: community-ws-svc
+                port:
+                  number: 8001
