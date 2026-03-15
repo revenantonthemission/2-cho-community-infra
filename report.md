@@ -1,6 +1,6 @@
-# 커뮤니티 서비스 "아무 말 대잔치" — 시스템 아키텍처 보고서
+# 커뮤니티 서비스 "아무 말 대잔치" — 인프라 아키텍처 및 안정성 설계 보고서
 
-> **작성일**: 2026-03-11
+> **작성일**: 2026-03-15
 > **프로젝트**: AWS AI School 2기 개인 프로젝트
 > **도메인**: my-community.shop
 > **리전**: ap-northeast-2 (서울)
@@ -33,30 +33,44 @@
 ### 1.2 기술 스택
 
 | 계층 | 기술 | 선택 근거 | 운영 고려사항 |
-| ------ | ------ | ----------- | ------------- |
-| **프론트엔드** | Vanilla JavaScript (MPA, Vite 빌드) | 프레임워크 없이 JS 기본기 학습 | S3 + CloudFront로 정적 배포, 서버 부하 0 |
-| **백엔드** | FastAPI (Python 3.13) | 비동기 I/O, 자동 API 문서화 | Lambda 컨테이너 실행, 콜드 스타트 영향 |
-| **데이터베이스** | MySQL 8.0 (aiomysql) | FULLTEXT 검색(ngram), 트랜잭션 격리 | 커넥션 풀 관리, Lambda 스케일링 시 폭발 위험 |
-| **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, 만료 토큰 주기적 정리 |
-| **인프라** | AWS (Terraform 19개 모듈) | 서버리스 아키텍처, IaC 재현성 | 3개 환경(Dev/Staging/Prod) 차등 설계 |
-| **CI/CD** | GitHub Actions + OIDC | 장기 자격 증명 없는 배포 | Blue/Green 배포 (Lambda Alias), Health check 게이트, 롤백 워크플로우 |
+| --- | --- | --- | --- |
+| **프론트엔드** | Vanilla JavaScript (MPA, Vite 빌드) | 프레임워크 없이 JS 기본기 학습 | nginx Pod으로 정적 배포 |
+| **백엔드** | FastAPI (Python 3.11+, aiomysql) | 비동기 I/O, 자동 API 문서화 | K8s Pod에서 Uvicorn 실행, HPA 자동 스케일링 |
+| **데이터베이스** | MySQL 8.0 (RDS + K8s StatefulSet) | FULLTEXT 검색(ngram), 트랜잭션 격리 | RDS 관리형 + K8s 내부 MySQL 이중 구성 |
+| **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, CronJob 주기적 정리 |
+| **인프라** | AWS (Terraform 21개 모듈) + kubeadm K8s | IaC 재현성, 컨테이너 오케스트레이션 학습 | 3개 환경(Dev/Staging/Prod) 통일 아키텍처 |
+| **CI/CD** | GitHub Actions + OIDC | 장기 자격 증명 없는 배포 | 리포지토리별 독립 워크플로우, 롤링 업데이트 |
+| **모니터링** | Prometheus + Grafana (kube-prometheus-stack) | K8s 네이티브 메트릭 수집 | ServiceMonitor 자동 수집, Alertmanager 연동 |
 | **부하 테스트** | Locust (gevent 기반) | 3종 사용자 시나리오 | 병목 사전 식별, 50~200 동시 사용자 검증 완료 |
 
-### 1.3 서비스 특성과 인프라 요구사항
+### 1.3 아키텍처 전환 배경
 
-서비스의 주요 기능이 인프라에 부과하는 운영 요구사항입니다.
+프로젝트 초기에는 서버리스 아키텍처(Lambda + API Gateway + CloudFront)로 운영했습니다. 학습 목적과 운영 안정성 확보를 위해 kubeadm 기반 K8s 클러스터로 전환했습니다.
+
+| 항목 | 서버리스 (이전) | K8s (현재) |
+| --- | --- | --- |
+| 컴퓨팅 | Lambda 컨테이너 | EC2 위 K8s Pod |
+| 프론트엔드 | S3 + CloudFront | nginx Pod |
+| WebSocket | API Gateway WebSocket + Lambda + DynamoDB | WS Pod + Redis Pub/Sub |
+| 파일 스토리지 | EFS 마운트 | S3 직접 업로드 |
+| Rate Limiter | DynamoDB Fixed Window Counter | Redis |
+| 배치 작업 | EventBridge → Lambda 내부 API | K8s CronJob |
+| 모니터링 | CloudWatch 알람 + 대시보드 | Prometheus + Grafana |
+| 배포 | Blue/Green (Lambda Alias) | 롤링 업데이트 (kubectl) |
+| 콜드 스타트 | 3~10초 (VPC ENI + SSM + 앱 초기화) | 없음 (항상 실행 중) |
+| 비용 모델 | 요청당 과금 + Provisioned Concurrency | 고정 EC2 비용 |
+
+### 1.4 서비스 특성과 인프라 요구사항
 
 | 서비스 특성 | 인프라 요구사항 | 핵심 대응 |
-| ----------- | --------------- | --------- |
-| **읽기 중심 워크로드** (게시글 목록·상세 조회가 전체 요청의 ~80%) | DB 읽기 부하 분산, 캐싱 전략 | RDS Read Replica (미적용), CloudFront 캐싱 고려 |
-| **이미지 업로드** (게시글당 최대 5장, 프로필 이미지) | 파일 저장소 내구성, 처리량 확보 | EFS 마운트 (3-AZ 자동 복제), 백업 필요 |
-| **FULLTEXT 검색** (한국어 ngram 파서) | DB CPU 부하 증가, 인덱스 유지 비용 | MySQL FULLTEXT INDEX, 대량 데이터 시 별도 검색 엔진 고려 |
-| **실시간 알림** (WebSocket 푸시 + 폴링 폴백) | WebSocket 연결 관리, 상태 저장소 필요 | DynamoDB 연결 매핑 + API GW Management API, 폴링 자동 폴백 |
-| **인증 토큰 관리** (JWT 발급·갱신·폐기) | 토큰 저장소 정합성, 브루트포스 방어 | DB 행 잠금, Rate Limiting (분산 환경 한계 존재) |
-| **동시 쓰기** (좋아요·북마크·댓글 동시 요청) | 경쟁 상태 방지, 트랜잭션 격리 | UNIQUE 제약, READ COMMITTED 격리 수준 |
-| **계정 정지** (관리자 기간 정지, 신고 연동) | 인증 체인 차단, 자동 만료 | 3중 체크 (로그인·토큰·API), `suspended_until` 비교 |
-| **마크다운 렌더링** (marked + DOMPurify + highlight.js) | XSS 방지, 번들 크기 관리 | DOMPurify sanitize → `<template>.innerHTML` 패턴, 코드 스플릿 ~46KB |
-| **DM 쪽지** (1:1 비공개 메시지, WebSocket 푸시) | 대화 정규화, soft delete, 차단 연동 | MIN/MAX 참가자 UNIQUE 제약, `last_message_at` 비정규화, MarkdownEditor 컴팩트 모드 |
+| --- | --- | --- |
+| **읽기 중심 워크로드** (~80%) | DB 읽기 부하 분산 | RDS Read Replica 고려, Redis 캐싱 가능 |
+| **이미지 업로드** (게시글당 최대 5장) | 파일 저장소 내구성 | S3 (99.999999999% 내구성) |
+| **FULLTEXT 검색** (한국어 ngram) | DB CPU 부하 | MySQL FULLTEXT INDEX, 대규모 시 Elasticsearch 고려 |
+| **실시간 알림** (WebSocket) | 연결 관리, 상태 공유 | Redis Pub/Sub, 폴링 자동 폴백 |
+| **인증 토큰 관리** | 토큰 정합성, 브루트포스 방어 | DB 행 잠금, Redis Rate Limiter |
+| **동시 쓰기** (좋아요·북마크·댓글) | 경쟁 상태 방지 | UNIQUE 제약, READ COMMITTED 격리 |
+| **DM 쪽지** (1:1 비공개 메시지) | soft delete, 차단 연동 | WebSocket 실시간 전달 + 폴링 폴백 |
 
 ---
 
@@ -64,149 +78,91 @@
 
 ### 2.1 전체 구성도
 
+사용자 요청이 브라우저에서 출발하여 K8s 클러스터 내부에서 처리되고, AWS 관리형 서비스와 연동되는 전체 흐름입니다.
+
 ```mermaid
 flowchart TD
     Browser["브라우저<br/>Vanilla JS MPA"]
 
-    subgraph Frontend["프론트엔드 서빙"]
+    subgraph DNS["DNS · 인증서"]
         direction LR
-        CF["CloudFront CDN<br/>아시아 포함 요금 등급 · HTTPS"]
-        CFF["CloudFront Function<br/>클린 URL 라우팅"]
-        S3["S3 비공개 버킷<br/>CloudFront만 접근 허용"]
+        R53["Route 53<br/>my-community.shop"]
+        CertMgr["cert-manager<br/>Let's Encrypt 자동 갱신"]
     end
 
-    subgraph APILayer["API 서빙"]
-        direction LR
-        R53["Route 53<br/>api.my-community.shop"]
-        APIGW["API Gateway<br/>HTTP API · CORS"]
+    Browser -- "HTTPS" --> R53
+    R53 -->|"A 레코드 → Worker IP"| Ingress
+
+    subgraph K8s["K8s Cluster (kubeadm · Dev: 1M+2W / Staging·Prod: 3M+2W+HAProxy)"]
+        Ingress["Ingress Controller<br/>nginx · hostNetwork DaemonSet<br/>TLS 종단"]
+
+        subgraph AppNS["app namespace"]
+            FE["Frontend Pod<br/>nginx + Vite 빌드"]
+            API["API Pod<br/>FastAPI + Uvicorn<br/>HPA (min 2 · max 4 · CPU 70%)"]
+            WS["WS Pod<br/>WebSocket Server"]
+            CronJobs["CronJobs<br/>토큰 정리 (1시간)<br/>피드 재계산 (30분)<br/>MySQL 백업 (1일)<br/>ECR 토큰 갱신 (6시간)"]
+        end
+
+        subgraph DataNS["data namespace"]
+            MySQLPod["MySQL 8.0<br/>StatefulSet · hostPath PV"]
+            RedisPod["Redis<br/>Rate Limiter · WS Pub/Sub"]
+        end
+
+        subgraph MonNS["monitoring namespace"]
+            Prom["Prometheus + Grafana<br/>kube-prometheus-stack"]
+            Metrics["metrics-server<br/>HPA 메트릭"]
+        end
+
+        Ingress --> FE
+        Ingress --> API
+        Ingress --> WS
+        API --> MySQLPod
+        API --> RedisPod
+        WS --> RedisPod
     end
 
-    subgraph WSLayer["실시간 알림"]
-        direction LR
-        R53_WS["Route 53<br/>ws.my-community.shop"]
-        APIGW_WS["WebSocket API GW<br/>$connect · $disconnect · $default"]
+    subgraph AWS["AWS 관리형 서비스"]
+        RDS["RDS MySQL 8.0<br/>(프라이빗 서브넷)"]
+        S3["S3<br/>업로드 · MySQL 백업 · 감사 로그"]
+        ECR["ECR<br/>컨테이너 이미지"]
+        SES["SES<br/>이메일 발송"]
+        CT["CloudTrail<br/>감사 로그 (멀티리전)"]
+        IAM["IAM<br/>K8s 노드 역할 · OIDC"]
     end
 
-    subgraph Compute["컴퓨팅 (Private Subnet)"]
-        direction LR
-        Lambda["Lambda Container<br/>FastAPI + Mangum<br/>Python 3.13 · 1024 MB"]
-        Lambda_WS["WebSocket Lambda<br/>Python 3.11 · 256 MB"]
-    end
+    API -- "파일 업로드<br/>STORAGE_BACKEND=s3" --> S3
+    API -- "이메일 발송" --> SES
+    ECR -.-> K8s
+    CronJobs -- "MySQL 백업" --> S3
 
-    subgraph Data["데이터 (Private Subnet)"]
-        direction LR
-        RDS["RDS MySQL 8.0<br/>Multi-AZ Prod · gp3"]
-        EFS["EFS<br/>/mnt/uploads"]
-        SSM["SSM<br/>SecureString"]
-        DDB["DynamoDB<br/>ws_connections · rate_limit"]
-    end
-
-    subgraph Ops["운영"]
-        direction LR
-        CW["CloudWatch<br/>6 Alarms · Dashboard"]
-        CT["CloudTrail<br/>Multi-Region"]
-        EB["EventBridge<br/>스케줄 규칙"]
-    end
-
-    subgraph Deploy["배포"]
-        direction LR
+    subgraph Deploy["CI/CD"]
         GHA["GitHub Actions<br/>OIDC 인증"]
-        ECR["ECR<br/>Docker Image"]
     end
 
-    Browser -- "HTTPS (정적 파일)" --> CF
-    CF --> CFF --> S3
+    GHA -- "Docker Push" --> ECR
+    GHA -- "SSH → kubectl rollout" --> K8s
 
-    Browser -- "HTTPS (API 요청)<br/>Bearer Token + Cookie" --> R53
-    R53 --> APIGW -- "Lambda 프록시 통합" --> Lambda
-
-    Browser -- "WSS (실시간 알림)" --> R53_WS
-    R53_WS --> APIGW_WS --> Lambda_WS
-
-    Lambda -- "비동기 DB 커넥션 풀<br/>5~50개" --> RDS
-    Lambda -- "파일 시스템 마운트" --> EFS
-    Lambda -. "콜드 스타트 시<br/>시크릿 조회" .-> SSM
-    Lambda -- "이메일 발송<br/>(인증·비밀번호)" --> SES["SES<br/>noreply@my-community.shop"]
-    Lambda -- "알림 푸시<br/>ManageConnections" --> APIGW_WS
-    Lambda -- "연결 조회" --> DDB
-    EB -. "토큰 정리 · 피드 재계산<br/>(1시간 · 30분 주기)" .-> Lambda
-    Lambda_WS -- "연결 매핑" --> DDB
-
-    Lambda -. "Metrics · Logs" .-> CW
-    APIGW -. "Access Logs" .-> CW
-
-    GHA -- "Docker Push" --> ECR -- "Image" --> Lambda
-    GHA -- "S3 Sync" --> S3
-    GHA -. "Invalidation" .-> CF
-
-    style WSLayer fill:#fce4ec,stroke:#c62828
-    style Frontend fill:#e3f2fd,stroke:#1565c0
-    style APILayer fill:#fff3e0,stroke:#e65100
-    style Compute fill:#fce4ec,stroke:#c62828
-    style Data fill:#e8f5e9,stroke:#2e7d32
-    style Ops fill:#f3e5f5,stroke:#6a1b9a
+    style K8s fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style AWS fill:#e3f2fd,stroke:#1565c0
     style Deploy fill:#eceff1,stroke:#455a64
 ```
 
-#### 컴포넌트별 역할
+#### 컴포넌트별 역할과 설계 근거
 
 | 컴포넌트 | 역할 | 설계 근거 |
-| ---------- | ------ | ----------- |
-| **CloudFront** | HTTPS 종단, 정적 파일 캐싱, Clean URL 라우팅 | S3 직접 노출 없이 보안 유지, 글로벌 엣지 캐싱으로 지연시간 감소 |
-| **S3** | 프론트엔드 정적 파일 호스팅 | 퍼블릭 액세스 전면 차단, OAC(Origin Access Control)로만 접근 허용 |
-| **API Gateway** | HTTP API 라우팅, CORS 처리, 접근 로깅 | REST API 대비 비용 70% 절감, Lambda 프록시 통합으로 설정 단순화 |
-| **Lambda** | FastAPI 앱 실행 (Mangum 어댑터) | 서버 관리 불필요, 요청량에 따른 자동 스케일링, 유휴 시 비용 0 |
-| **RDS** | MySQL 8.0 관계형 데이터 저장 | FULLTEXT 검색(ngram), 트랜잭션 ACID 보장, Private Subnet 격리 |
-| **EFS** | 사용자 업로드 파일 저장 | Lambda의 읽기 전용 파일시스템 제약 해결, 3-AZ 자동 복제 |
-| **SSM** | DB 비밀번호, JWT 시크릿 키 관리 | Lambda 환경변수에 평문 저장 방지, SecureString 암호화 |
-| **SES** | 이메일 인증, 임시 비밀번호 발송 | 도메인 인증(DKIM), Lambda IAM 연동, 프로덕션 이메일 배달 |
-| **CloudWatch** | 메트릭 알람, 대시보드, 로그 집계 | Lambda 에러, RDS CPU, 스토리지, 커넥션 수 실시간 모니터링 |
-| **CloudTrail** | AWS API 호출 감사 로그 | 멀티리전 추적으로 us-east-1(CloudFront/ACM) 이벤트 포함 |
-| **EventBridge** | 스케줄 기반 배치 작업 트리거 | API Destination + Connection으로 Lambda 내부 API 호출, 토큰 정리(1시간)·피드 재계산(30분) |
-| **DynamoDB** | WebSocket 연결 매핑 + 분산 Rate Limiter | ws_connections(실시간 알림), rate_limit(Fixed Window Counter, TTL 자동 만료) |
-
-#### API Gateway — Lambda 프록시 통합 (AWS_PROXY)
-
-API Gateway와 Lambda 사이의 통합 방식으로 **AWS_PROXY (Lambda Proxy Integration)** 를 사용합니다. 이는 API Gateway가 수신한 HTTP 요청(메서드, 경로, 헤더, 쿼리 파라미터, 바디, 클라이언트 IP 등)을 **매핑 없이 하나의 JSON 이벤트로 묶어** Lambda에 전달하는 방식입니다.
-
-```mermaid
-flowchart LR
-    Client["클라이언트"] -->|"HTTPS 요청"| APIGW["API Gateway<br/>HTTP API"]
-    APIGW -->|"AWS_PROXY v2.0<br/>JSON 이벤트 변환"| Lambda["Lambda"]
-
-    subgraph Lambda_Inner["Lambda 내부"]
-        direction TB
-        Event["API Gateway 이벤트<br/>{httpMethod, path, headers,<br/>queryStringParameters, body}"]
-        Mangum["Mangum 어댑터<br/>이벤트 → ASGI 변환"]
-        FastAPI["FastAPI 앱<br/>라우팅 · 비즈니스 로직"]
-        Response["응답 구성<br/>{statusCode, headers, body}"]
-        Event --> Mangum --> FastAPI --> Response
-    end
-
-    Lambda -->|"JSON 응답"| APIGW
-    APIGW -->|"HTTP 응답 변환"| Client
-
-    style APIGW fill:#ff9800,stroke:#e65100,color:#fff
-    style Lambda fill:#4caf50,stroke:#2e7d32,color:#fff
-    style Lambda_Inner fill:#e8f5e9,stroke:#2e7d32
-    style Mangum fill:#fff3e0,stroke:#e65100
-```
-
-| 비교 항목 | AWS_PROXY (현재) | AWS (Custom Integration) |
-| ---------- | ------------------- | -------------------------- |
-| **요청 전달** | 원본 HTTP 요청 전체를 그대로 Lambda에 전달 | VTL 매핑 템플릿으로 변환 후 전달 |
-| **응답 처리** | Lambda가 `{statusCode, headers, body}`를 직접 구성 | API Gateway가 응답 매핑 템플릿으로 변환 |
-| **설정 복잡도** | 낮음 (매핑 불필요) | 높음 (VTL 템플릿 작성 필요) |
-| **프레임워크 호환** | Mangum 등 어댑터로 기존 웹 프레임워크 그대로 사용 | 프레임워크 독립적 핸들러 필요 |
-
-**이 프로젝트에서의 동작 방식**:
-
-1. API Gateway가 HTTP 요청을 **v2.0 페이로드 형식**의 JSON 이벤트로 변환하여 Lambda에 전달합니다.
-2. Lambda 컨테이너 내부의 **Mangum** 어댑터가 이 이벤트를 ASGI 프로토콜로 변환합니다.
-3. **FastAPI**가 일반 웹 서버처럼 요청을 처리하고 응답을 생성합니다.
-4. Mangum이 FastAPI 응답을 다시 `{statusCode, headers, body}` 형식으로 역변환하여 API Gateway에 반환합니다.
-
-이 구조 덕분에 로컬에서는 `uvicorn`으로, Lambda에서는 Mangum으로 **동일한 FastAPI 앱을 변경 없이** 실행할 수 있습니다.
+| --- | --- | --- |
+| **Ingress (nginx)** | HTTPS 종단, 경로 기반 라우팅, TLS 관리 | hostNetwork DaemonSet으로 외부 LB 없이 직접 트래픽 수신 |
+| **cert-manager** | Let's Encrypt TLS 인증서 자동 발급·갱신 | ACM 대비 K8s 네이티브, 비용 0 |
+| **API Pod** | FastAPI 앱 실행 (Uvicorn) | HPA로 CPU 70% 기준 2~4개 Pod 자동 스케일링 |
+| **WS Pod** | WebSocket 실시간 알림 | Redis Pub/Sub로 Pod 간 이벤트 브로드캐스트 |
+| **FE Pod** | nginx + Vite 빌드 정적 파일 서빙 | K8s 내부 직접 서빙, CDN 없이 배포 |
+| **MySQL (StatefulSet)** | K8s 내부 MySQL (데이터 계층) | 개발 환경 빠른 접근, RDS와 별도 운영 |
+| **Redis** | Rate Limiter, WebSocket Pub/Sub | 인메모리 저장소, DynamoDB 대체 |
+| **RDS** | AWS 관리형 MySQL (프라이빗 서브넷) | 자동 백업, Multi-AZ(Prod), 관리 부담 최소화 |
+| **S3** | 파일 업로드, MySQL 백업, CloudTrail 로그 | 99.999999999% 내구성, IAM 역할 인증 |
+| **ECR** | Docker 이미지 저장 | K8s 노드 IAM 역할로 Pull, lifecycle 정책 |
+| **SES** | 이메일 인증, 임시 비밀번호 발송 | 도메인 DKIM 인증, AWS 관리형 |
+| **Prometheus + Grafana** | 클러스터 메트릭 수집·시각화 | ServiceMonitor 자동 수집, HPA 연동 |
 
 ### 2.2 네트워크 토폴로지
 
@@ -222,29 +178,27 @@ flowchart TD
                 Bastion["Bastion Host<br/>(Dev만)"]
             end
             subgraph PrivA["Private Subnet · 10.x.100.0/24"]
-                Lambda_A["Lambda ENI"]
                 RDS_Primary["RDS Primary"]
-                EFS_A["EFS Mount"]
             end
         end
 
         subgraph AZ_B["ap-northeast-2b"]
             subgraph PubB["Public Subnet · 10.x.1.0/24"]
-                NAT_B["NAT Gateway<br/>(Prod만)"]
+                HAProxy["HAProxy<br/>L4 LB · TCP 6443<br/>(Staging/Prod만)"]
+                K8sMaster["K8s Master ×1~3<br/>c7i-flex.large"]
+                K8sWorker["K8s Worker ×2<br/>c7i-flex.large"]
             end
             subgraph PrivB["Private Subnet · 10.x.101.0/24"]
-                Lambda_B["Lambda ENI"]
                 RDS_Standby["RDS Standby<br/>(Prod Multi-AZ)"]
-                EFS_B["EFS Mount"]
             end
         end
     end
 
     Internet <--> IGW
     IGW <--> PubA
-    IGW <--> PubB
-    Lambda_A -- "outbound" --> NAT_A --> IGW
-    Lambda_B -- "outbound" --> NAT_B --> IGW
+    IGW <-->|"HTTP/HTTPS 트래픽"| PubB
+    Bastion -->|"SSH 터널"| RDS_Primary
+    K8sWorker -->|"TCP 3306"| RDS_Primary
     RDS_Primary -. "동기 복제<br/>(Prod)" .-> RDS_Standby
 
     style VPC fill:#fafafa,stroke:#333,stroke-width:2px
@@ -256,214 +210,129 @@ flowchart TD
     style PrivB fill:#e8f5e9,stroke:#2e7d32
 ```
 
-#### 보안 그룹 흐름
+#### 보안 그룹 트래픽 흐름
 
 ```mermaid
 flowchart LR
-    APIGW_ext["API Gateway<br/>(AWS 관리형)"] -->|"Lambda Invoke"| Lambda_SG
-    Lambda_SG["lambda-sg<br/>(Inbound: 없음)"] -->|"TCP 3306"| RDS_SG["rds-sg<br/>(Lambda만 허용)"]
-    Lambda_SG -->|"TCP 2049 (NFS)"| EFS_SG["efs-sg<br/>(Lambda만 허용)"]
-    Lambda_SG -->|"TCP 443 (HTTPS)<br/>→ NAT → Internet"| SSM_ext["SSM Endpoint"]
-    Bastion_SG["bastion-sg<br/>(SSH: 허용 CIDR만)"] -->|"TCP 3306"| RDS_SG
+    User["사용자<br/>(인터넷)"] -->|"TCP 80/443"| Worker_SG
+    Admin["관리자"] -->|"TCP 22 (SSH)"| SSH_SG["k8s-ssh SG<br/>(허용 CIDR만)"]
+
+    Worker_SG["k8s-worker SG"] -->|"TCP 3306"| RDS_SG["rds SG"]
+    Bastion_SG["bastion SG<br/>(SSH: 허용 CIDR만)"] -->|"TCP 3306"| RDS_SG
+
+    Master_SG["k8s-master SG"] <-->|"전 포트<br/>(Calico Pod 네트워크)"| Internal_SG["k8s-internal SG<br/>(자기 참조)"]
+    Worker_SG <-->|"전 포트"| Internal_SG
 ```
 
 **설계 근거**:
 
-- Lambda는 VPC 내부(Private Subnet)에서 실행되어 RDS/EFS에 직접 접근하되, 외부 통신(SSM 등)은 NAT Gateway를 경유합니다.
-- RDS 보안 그룹은 Lambda SG와 Bastion SG만 인바운드 허용하여 최소 권한 원칙을 적용했습니다.
-- Bastion Host는 개발 환경에서만 활성화하고, Staging/Prod에서는 비활성화하여 비용을 절감합니다.
+- K8s 노드는 퍼블릭 서브넷에 배치 — Ingress Controller(hostNetwork)가 인터넷 트래픽을 직접 수신합니다.
+- K8s Internal SG는 자기 참조(self-referencing)로 노드 간 전 포트 통신을 허용합니다 (Calico CNI 직접 라우팅에 필수).
+- RDS는 프라이빗 서브넷에 격리되어 K8s Worker SG와 Bastion SG에서만 접근 가능합니다.
+- SSH SG는 `k8s_allowed_ssh_cidrs`가 제공된 경우에만 조건부 생성됩니다.
 
 #### 환경별 VPC 설정
 
-| 환경 | VPC CIDR | NAT Gateway | AZ 수 | Bastion |
-| ------ | ---------- | ------------- | ------- | --------- |
-| Dev | `10.0.0.0/16` | 1개 (비용 절감) | 2 | 활성화 |
-| Staging | `10.1.0.0/16` | 1개 (비용 절감) | 2 | 비활성화 |
-| Prod | `10.2.0.0/16` | AZ당 1개 (2개) | 2 | 비활성화 |
+| 환경 | VPC CIDR | NAT Gateway | K8s 토폴로지 | EC2 합계 | Bastion |
+| --- | --- | --- | --- | --- | --- |
+| Dev | `10.0.0.0/16` | 1개 | 1M + 2W | 3대 | 활성화 |
+| Staging | `10.1.0.0/16` | 1개 | **3M + 2W + HAProxy** (HA) | 6대 | 비활성화 |
+| Prod | `10.2.0.0/16` | AZ당 1개 | **3M + 2W + HAProxy** (HA) | 6대 | 비활성화 |
 
-#### Bastion Host (점프 서버)
+### 2.3 서비스 간 통신 흐름
 
-**Bastion Host**는 외부(인터넷)에서 Private Subnet 내부의 리소스에 접근하기 위한 **유일한 중계 지점(점프 서버)** 입니다. RDS는 보안을 위해 Private Subnet에 배치되어 인터넷에서 직접 접속이 불가능하므로, 개발자가 DB를 관리하려면 Public Subnet에 위치한 Bastion Host를 경유해야 합니다.
-
-```mermaid
-flowchart LR
-    Dev["개발자 PC"] -->|"1. SSH (TCP 22)<br/>허용된 IP만"| Bastion["Bastion Host<br/>Public Subnet<br/>t3.micro · Elastic IP"]
-    Bastion -->|"2. MySQL (TCP 3306)<br/>VPC 내부 통신"| RDS["RDS MySQL<br/>Private Subnet"]
-
-    subgraph VPC["VPC"]
-        subgraph Public["Public Subnet"]
-            Bastion
-        end
-        subgraph Private["Private Subnet"]
-            RDS
-            Lambda["Lambda"]
-        end
-    end
-
-    Lambda -->|"TCP 3306"| RDS
-
-    style Public fill:#e3f2fd,stroke:#1565c0
-    style Private fill:#e8f5e9,stroke:#2e7d32
-    style Bastion fill:#fff3e0,stroke:#e65100
-    style RDS fill:#fce4ec,stroke:#c62828
-    style VPC fill:#fafafa,stroke:#333,stroke-width:2px
-```
-
-**SSH 터널링을 통한 DB 접속 방식**:
-
-개발자는 Bastion Host에 직접 로그인하는 대신 **SSH 터널(포트 포워딩)** 을 사용하여 로컬 PC에서 RDS에 접속합니다. 이 방식은 Bastion Host에 DB 클라이언트를 설치하지 않아도 되고, 로컬의 GUI 도구(MySQL Workbench 등)를 그대로 사용할 수 있는 장점이 있습니다.
-
-```text
-# SSH 터널 생성: 로컬 3306 → Bastion → RDS 3306
-ssh -i key.pem -L 3306:<rds-endpoint>:3306 ec2-user@<bastion-eip>
-
-# 별도 터미널에서 로컬처럼 RDS 접속
-mysql -h 127.0.0.1 -u community_manager -p community_service
-```
-
-**이 프로젝트에서의 설정**:
-
-| 항목 | 설정 |
-| ------ | ------ |
-| **인스턴스** | `t3.micro` (Free Tier 대상) |
-| **OS** | Amazon Linux 2023 (아키텍처에 따라 x86/ARM 자동 선택) |
-| **퍼블릭 IP** | Elastic IP 고정 할당 (재시작 시에도 IP 유지) |
-| **SSH 접근** | `bastion_allowed_cidrs` 변수로 허용 IP 제한 (민감 정보 — `secret.tfvars`에서 관리) |
-| **초기 설정** | User Data 스크립트로 MariaDB 클라이언트 자동 설치 |
-| **조건부 생성** | `create_bastion` 변수로 제어 (`count = var.create_bastion ? 1 : 0`) |
-
-**환경별 운영 전략**: Dev 환경에서만 활성화하고, Staging/Prod에서는 `create_bastion = false`로 리소스 자체를 생성하지 않아 비용과 공격 표면을 동시에 줄입니다. 프로덕션 DB 관리가 필요한 경우에는 AWS Systems Manager Session Manager를 통한 접근을 고려합니다.
-
-### 2.3 인증 흐름
+#### 인증 흐름 (JWT)
 
 ```mermaid
 sequenceDiagram
     participant Client as 브라우저
-    participant CF as CloudFront
-    participant APIGW as API Gateway
-    participant Lambda as Lambda (FastAPI)
+    participant Ingress as Ingress (nginx)
+    participant API as API Pod (FastAPI)
     participant RDS as RDS MySQL
 
     rect rgb(240, 248, 255)
         Note over Client,RDS: 로그인
-        Client->>CF: POST /v1/auth/session {email, password}
-        CF->>APIGW: Proxy (api.my-community.shop)
-        APIGW->>Lambda: 프록시 통합 (요청 전달)
-        Lambda->>RDS: 이메일로 사용자 조회 (파라미터화 쿼리)
-        RDS-->>Lambda: 사용자 레코드
-        Lambda->>Lambda: 비밀번호 검증 (bcrypt, 별도 스레드)
-        Lambda->>Lambda: 계정 정지 확인 (suspended_until > NOW → 403)
-        Lambda->>Lambda: JWT Access Token 생성 (HS256, 30분)
-        Lambda->>Lambda: Refresh Token 생성 (무작위 문자열)
-        Lambda->>RDS: INSERT refresh_token (SHA-256 해시)
-        Lambda-->>Client: {access_token} + Set-Cookie: refresh_token (HttpOnly, Secure)
+        Client->>Ingress: POST /v1/auth/session {email, password}
+        Ingress->>API: 프록시 (api.my-community.shop → api-service:8000)
+        API->>RDS: 이메일로 사용자 조회 (파라미터화 쿼리)
+        RDS-->>API: 사용자 레코드
+        API->>API: bcrypt 검증 (별도 스레드 — asyncio.to_thread)
+        API->>API: 계정 정지 확인 (suspended_until > NOW → 403)
+        API->>RDS: INSERT refresh_token (SHA-256 해시)
+        API-->>Client: {access_token} + Set-Cookie: refresh_token (HttpOnly, Secure)
     end
 
     rect rgb(255, 248, 240)
         Note over Client,RDS: API 요청 (인증)
-        Client->>APIGW: GET /v1/posts (Bearer 토큰 포함)
-        APIGW->>Lambda: 프록시 통합
-        Lambda->>Lambda: JWT 토큰 디코딩 + 서명 검증
-        Lambda->>RDS: 사용자 존재 확인 (탈퇴 여부 + 정지 상태 포함)
-        Lambda-->>Client: 200 OK + 데이터 (정지 시 403)
+        Client->>Ingress: GET /v1/posts (Bearer 토큰)
+        Ingress->>API: 프록시
+        API->>API: JWT 디코딩 + 서명 검증
+        API->>RDS: 사용자 존재·정지 상태 확인
+        API-->>Client: 200 OK + 데이터
     end
 
     rect rgb(240, 255, 240)
         Note over Client,RDS: 자동 갱신 (Access Token 만료 시)
-        Client->>APIGW: POST /v1/auth/token/refresh (쿠키: refresh_token)
-        APIGW->>Lambda: 프록시 통합
-        Lambda->>RDS: 토큰 조회 + 행 잠금 (동시 재사용 방지)
-        Lambda->>Lambda: 새 Access + Refresh 토큰 생성
-        Lambda->>RDS: 기존 토큰 삭제 + 새 토큰 저장 (하나의 트랜잭션)
-        Lambda-->>Client: {new_access_token} + Set-Cookie: new_refresh_token
+        Client->>Ingress: POST /v1/auth/token/refresh (쿠키)
+        Ingress->>API: 프록시
+        API->>RDS: SELECT ... FOR UPDATE (동시 재사용 방지)
+        API->>RDS: DELETE 기존 + INSERT 신규 (하나의 트랜잭션)
+        API-->>Client: {new_access_token} + Set-Cookie: new_refresh_token
     end
 ```
 
 **보안 설계 포인트**:
 
-- Access Token은 JavaScript 변수(메모리)에 저장하여 XSS 공격 시에도 브라우저 저장소보다 안전합니다.
-- Refresh Token은 HttpOnly + Secure 쿠키로 JavaScript에서 직접 접근할 수 없게 차단합니다.
-- DB 조회 시 행 잠금(`SELECT ... FOR UPDATE`)으로 동시 토큰 재사용 공격을 방지합니다.
-- bcrypt 비밀번호 해싱은 별도 스레드에서 실행하여 다른 요청 처리를 지연시키지 않습니다.
-- 존재하지 않는 이메일로 로그인 시에도 동일한 비밀번호 검증 절차를 수행하여, 응답 시간 차이로 이메일 존재 여부를 추측하는 공격(타이밍 공격)을 방지합니다.
-- 계정 정지(`suspended_until`)는 로그인, 토큰 갱신, API 요청(`_validate_token`) 3개 지점에서 검사하며, 만료 시 자동 해제됩니다(별도 배치 작업 불필요).
+- Access Token은 JavaScript 메모리에 저장 — XSS 공격 시에도 브라우저 저장소보다 안전합니다.
+- Refresh Token은 HttpOnly + Secure 쿠키로 JavaScript 직접 접근을 차단합니다.
+- DB 행 잠금(`SELECT ... FOR UPDATE`)으로 동시 토큰 재사용 공격을 방지합니다.
+- 타이밍 공격 방지: 존재하지 않는 이메일로 로그인 시에도 동일한 bcrypt 검증을 수행합니다.
 
-### 2.4 CI/CD 파이프라인
+#### CI/CD 배포 흐름
 
 ```mermaid
 flowchart LR
-    subgraph GitHub["GitHub Repository"]
-        Code["소스 코드"]
-        WD["workflow_dispatch<br/>(수동 트리거)"]
+    subgraph GitHub["GitHub (3개 리포지토리)"]
+        BE["BE 리포<br/>deploy-k8s.yml"]
+        FE["FE 리포<br/>deploy-k8s.yml"]
+        Infra["Infra 리포<br/>deploy-infra.yml"]
     end
 
     subgraph Auth["인증"]
-        OIDC["GitHub OIDC 인증<br/>(토큰 기반 신원 확인)"]
-        STS["AWS STS<br/>(임시 자격 증명 발급)"]
+        OIDC["GitHub OIDC<br/>(토큰 기반)"]
+        STS["AWS STS<br/>(임시 자격 증명)"]
     end
 
-    subgraph Backend_Deploy["백엔드 배포 (Blue/Green)"]
-        Docker["Docker Build<br/>(--provenance=false)"]
+    subgraph K8s_Deploy["K8s 배포 (롤링 업데이트)"]
+        Docker["Docker Build<br/>(--platform linux/amd64)"]
         ECR_Push["ECR Push<br/>(sha-commit + latest)"]
-        Lambda_Publish["Lambda Version Publish<br/>(--publish)"]
-        Health["Health Check<br/>(새 버전 직접 호출)"]
-        Alias_Switch["Alias 'live' 전환<br/>(update-alias)"]
+        SG_Open["SSH SG 규칙 추가<br/>(GitHub Actions IP)"]
+        SSH["SSH → Master 노드<br/>kubectl rollout restart"]
+        Health["Health Check<br/>(HTTPS → /health)"]
+        SG_Close["SSH SG 규칙 제거"]
     end
 
-    subgraph Frontend_Deploy["프론트엔드 배포"]
-        S3_Sync["S3 Sync<br/>(allowlist 기반)"]
-        CF_Inv["CloudFront Invalidation"]
-    end
-
-    WD -->|"환경 선택<br/>(dev/staging/prod)"| OIDC
+    BE -->|"api/ws 컴포넌트"| OIDC
+    FE -->|"프론트엔드"| OIDC
     OIDC --> STS
-    STS -->|"임시 자격 증명"| Backend_Deploy
-    STS -->|"임시 자격 증명"| Frontend_Deploy
-
-    Code --> Docker
+    STS --> Docker
     Docker --> ECR_Push
-    ECR_Push --> Lambda_Publish
-    Lambda_Publish --> Health
-    Health -->|"성공"| Alias_Switch
+    ECR_Push --> SG_Open
+    SG_Open --> SSH
+    SSH --> Health
+    Health --> SG_Close
 
-    Code --> S3_Sync
-    S3_Sync --> CF_Inv
+    Infra -->|"terraform plan/apply"| STS
+
+    style K8s_Deploy fill:#e8f5e9,stroke:#2e7d32
 ```
 
 **설계 근거**:
 
-- **OIDC 인증**: 장기 자격 증명(AWS Access Key) 대신 GitHub Actions가 임시 토큰으로 AWS에 인증합니다. 키 유출 위험이 원천 차단됩니다.
-- **`--provenance=false`**: Docker 빌드 시 생성되는 출처 증명 메타데이터를 Lambda가 지원하지 않으므로 비활성화해야 합니다.
-- **SHA 태그**: `sha-<커밋해시>` 형식의 고유 태그로 Lambda를 업데이트하여 동시 배포 충돌을 방지합니다. `latest` 태그도 병행 push합니다.
-- **Blue/Green 배포 (Lambda Alias)**: 새 Lambda 버전을 `--publish`로 발행한 뒤, `/health` 직접 호출로 검증을 거쳐 Alias `live`를 전환합니다. Health check 실패 시 alias가 이전 버전을 유지하므로 서비스 영향 없이 안전하게 롤백됩니다.
-- **허용 목록 기반 S3 동기화**: `*.html`, `*.css`, `*.js`, 이미지, 폰트만 업로드하여 불필요한 파일(.git 등)이 배포되지 않습니다.
-- **Prod 배포 제한**: 프로덕션 환경은 upstream 레포지토리에서만 배포 가능하도록 OIDC 조건을 설정했습니다.
-- **동시 배포 방지**: GitHub Actions `concurrency` 그룹으로 같은 환경에 대한 병렬 배포/롤백을 차단합니다.
-
-### 2.5 기술 스택 정리표
-
-| 카테고리 | 서비스/기술 | 용도 |
-| ---------- | ------------ | ------ |
-| **CDN** | CloudFront (아시아 포함 요금 등급) | HTTPS 종단, 정적 파일 캐싱, 클린 URL |
-| **정적 호스팅** | S3 (비공개 + CloudFront 전용 접근) | HTML/CSS/JS 저장 |
-| **DNS** | Route 53 | 도메인 관리, ACM DNS 검증 |
-| **SSL** | ACM (서울 + 버지니아) | API Gateway용 + CloudFront용 인증서 |
-| **API 라우팅** | API Gateway (HTTP API) | CORS, Lambda 프록시, 접근 로깅 |
-| **실시간 알림** | API Gateway (WebSocket API) + DynamoDB (ws_connections) | WebSocket 연결 관리, 실시간 이벤트 푸시 |
-| **컴퓨팅** | Lambda (Container Image) | FastAPI + Mangum 실행 |
-| **컨테이너 레지스트리** | ECR | Docker 이미지 저장, 라이프사이클 관리 |
-| **데이터베이스** | RDS MySQL 8.0 (gp3) | 관계형 데이터, FULLTEXT 검색 |
-| **파일 스토리지** | EFS (범용 모드) | 사용자 업로드 이미지 |
-| **시크릿 관리** | SSM Parameter Store | DB 비밀번호, JWT 시크릿 (암호화 저장) |
-| **이메일** | SES (Simple Email Service) | 이메일 인증, 임시 비밀번호 발급 (도메인 DKIM 인증) |
-| **모니터링** | CloudWatch | 6개 알람, 4개 위젯 대시보드 |
-| **감사** | CloudTrail (멀티리전) | AWS API 호출 로그 |
-| **접근 관리** | IAM (MFA 강제) | 최소 권한 원칙, OIDC 역할 |
-| **네트워크** | VPC (2-AZ) | Private Subnet 격리, NAT Gateway |
-| **배포** | GitHub Actions + OIDC | 장기 자격 증명 없는 CI/CD |
-| **배치 작업** | EventBridge (스케줄 규칙 + API Destination) | 토큰 정리(1시간), 피드 점수 재계산(30분) |
-| **분산 Rate Limiting** | DynamoDB (rate_limit 테이블) | Fixed Window Counter, TTL 자동 만료, fail-open 정책 |
-| **IaC** | Terraform (>= 1.5.0) | 19개 모듈, 3개 환경 |
+- **OIDC 인증**: 장기 자격 증명(AWS Access Key) 없이 임시 토큰으로 AWS 인증. 자격 증명 유출 위험을 제거합니다.
+- **동적 SSH SG 관리**: 배포 시에만 GitHub Actions Runner IP를 SSH SG에 추가하고, 완료 후 즉시 제거합니다.
+- **롤링 업데이트**: `kubectl rollout restart`로 무중단 배포. 새 Pod가 Ready 후 기존 Pod를 종료합니다.
+- **리포지토리별 독립 워크플로우**: BE(api/ws), FE(프론트엔드), Infra(Terraform)를 분리하여 배포 범위를 제한합니다.
 
 ---
 
@@ -474,7 +343,7 @@ flowchart LR
 #### 현재 규모 (학교 커뮤니티)
 
 | 지표 | 추정치 | 근거 |
-| ------ | -------- | ------ |
+| --- | --- | --- |
 | 등록 사용자 | ~100명 | AWS AI School 수강생 규모 |
 | 일일 활성 사용자(DAU) | ~30명 | 수강생의 30% 일일 접속 가정 |
 | 피크 동시 접속 | ~10명 | 수업 후 시간대 집중 |
@@ -484,171 +353,198 @@ flowchart LR
 #### 성장 시나리오
 
 | 단계 | DAU | 피크 동시 접속 | 일일 API 요청 | 트리거 이벤트 |
-| ------ | ----- | --------------- | -------------- | -------------- |
+| --- | --- | --- | --- | --- |
 | **현재** | 30 | 10 | 3,000 | — |
 | **Stage 1** | 300 | 50 | 30,000 | 교육 기관 확대 |
 | **Stage 2** | 3,000 | 500 | 300,000 | 외부 공개 |
 | **Stage 3** | 30,000 | 5,000 | 3,000,000 | 바이럴 성장 |
 
-부하 테스트에서 확인한 기준: 50~200 동시 사용자, 요청 타임아웃 15초(Lambda 콜드 스타트 감안).
-
 ### 3.2 병목 지점 분석
 
-#### 3.2.1 Lambda 동시성 및 콜드 스타트
+#### 3.2.1 K8s 노드 리소스 한계
 
 | 지표 | 현재 설정 | 한계 |
-| ------ | ----------- | ------ |
-| Provisioned Concurrency (Prod) | 5 | 5개 초과 동시 요청은 콜드 스타트 발생 |
-| On-demand 동시성 | 계정 기본 1,000 | 리전 계정 한도에 의존 |
-| 콜드 스타트 소요 시간 | 3~10초 | VPC ENI 프로비저닝 + SSM 조회 + 앱 초기화 |
-| 메모리 (Prod) | 1,024 MB | CPU는 메모리에 비례 배분 |
+| --- | --- | --- |
+| Worker 노드 | c7i-flex.large × 2 (2 vCPU, 4 GB 각) | 총 4 vCPU, 8 GB |
+| API Pod (HPA) | min 2 → max 4 (CPU 250m~500m) | 4 Pod × 500m = 2 vCPU (노드 한도) |
+| WS Pod | 1개 (고정) | 단일 Pod 장애 시 WebSocket 중단 |
 
-**영향**: Stage 2(피크 500명) 이상에서 Provisioned Concurrency 5개가 부족하여 대부분의 요청이 콜드 스타트를 경험합니다. 콜드 스타트 3~10초는 사용자 경험에 직접적인 영향을 줍니다.
+**영향**: Stage 2(피크 500명) 이상에서 Worker 2대의 리소스가 포화됩니다. HPA가 Pod를 max 4까지 증가시켜도 노드 리소스 한도에 도달하면 Pod가 Pending 상태에 머뭅니다.
 
 ```mermaid
 flowchart TD
-    Request["동시 요청 500개"]
+    Traffic["트래픽 증가<br/>피크 동시 접속 증가"]
 
-    subgraph Warm["Warm Path — 즉시 응답"]
-        PC["Provisioned Concurrency 5개<br/>응답 시간: ~100ms"]
-    end
+    Traffic -->|"CPU 사용률 > 70%"| HPA["HPA 감지<br/>Pod 수 증가 (2→4)"]
+    HPA -->|"노드 여유 있음"| Scale["Pod 스케일 아웃<br/>요청 정상 분산"]
+    HPA -->|"노드 리소스 부족<br/>(4 vCPU 소진)"| Pending["Pod Pending<br/>스케줄링 불가"]
+    Pending --> Degraded["서비스 품질 저하<br/>기존 Pod에 과부하"]
+    Degraded -->|"연쇄 효과"| Timeout["요청 타임아웃<br/>사용자 이탈"]
 
-    subgraph Cold["Cold Start Path — 3~10초 소요"]
-        OD["On-demand 495개"]
-        ENI["1. VPC ENI 프로비저닝<br/>~1-5초 (가장 느린 구간)"]
-        SSM_Init["2. SSM GetParameters<br/>~200-500ms"]
-        App_Init["3. FastAPI 앱 초기화<br/>DB Pool 생성 · ~500ms-1초"]
-        Ready["요청 처리 시작"]
-    end
-
-    Request --> PC
-    Request --> OD
-    OD --> ENI --> SSM_Init --> App_Init --> Ready
-
-    style Warm fill:#e8f5e9,stroke:#2e7d32
-    style Cold fill:#fff3e0,stroke:#e65100
-    style ENI fill:#fce4ec,stroke:#c62828
+    style Scale fill:#e8f5e9,stroke:#2e7d32
+    style Pending fill:#fce4ec,stroke:#c62828
+    style Degraded fill:#ef5350,color:#fff,stroke:#b71c1c
+    style Timeout fill:#b71c1c,color:#fff,stroke:#7f0000
 ```
 
 #### 3.2.2 RDS 단일 인스턴스 병목
 
 | 지표 | Dev | Staging | Prod | 한계 |
-| ------ | ----- | --------- | ------ | ------ |
-| 인스턴스 | db.t3.micro | db.t3.small | db.t3.medium | vCPU 2, 4GB RAM |
-| 최대 커넥션 (추정) | ~60 | ~120 | ~120 | `max_connections` = RAM 의존 |
-| 앱 커넥션 풀 | 5~50 | 5~50 | 5~50 | Lambda 인스턴스당 |
-| CloudWatch 알람 | — | — | > 40 커넥션 | 경고 기준 |
+| --- | --- | --- | --- | --- |
+| 인스턴스 | db.t3.micro | db.t3.micro | db.t3.medium | vCPU 2, RAM 4GB |
+| 최대 커넥션 (추정) | ~60 | ~60 | ~120 | `max_connections` = RAM 의존 |
 | 스토리지 (gp3) | 20 GB 고정 | 20~100 GB | 50~200 GB | 자동 확장 |
+| IOPS (gp3 기본) | 3,000 | 3,000 | 3,000 | 프로비저닝 가능 |
 
-**핵심 문제**: Lambda가 수평 확장되면 각 인스턴스가 독립적인 커넥션 풀(최대 50개)을 생성합니다. Lambda 인스턴스 20개가 동시에 실행되면 이론적으로 최대 1,000개의 DB 커넥션이 요청되어 RDS 한도를 초과합니다.
+**K8s의 DB 커넥션 관리 장점**: Lambda 환경에서는 인스턴스마다 독립적인 커넥션 풀을 생성하여 폭발 위험이 있었습니다. K8s에서는 Pod 수가 HPA로 제어되므로 커넥션 수를 예측할 수 있습니다.
 
 ```text
-Lambda 인스턴스 수 × 풀 최대 크기 = 잠재적 DB 커넥션 수
-      20        ×    50     =     1,000 (RDS 한도 초과!)
+K8s Pod 수 × 풀 최대 크기 = 예측 가능한 DB 커넥션 수
+     4     ×    50 (max) =     200 (RDS t3.medium 한도 내)
+     4     ×    10 (기본)=      40 (여유 충분)
 ```
 
-#### 3.2.3 Rate Limiter의 분산 환경 한계
+**Stage 2 이상 병목**: 읽기 요청이 80%를 차지하므로, 단일 RDS 인스턴스의 CPU가 FULLTEXT 검색(ngram)과 대량 SELECT로 포화됩니다. Read Replica 도입 시점입니다.
 
-Rate Limiter는 로컬(인메모리)과 분산(DynamoDB) 두 가지 백엔드를 지원합니다. 프로덕션에서는 DynamoDB Fixed Window Counter를 사용하여 Lambda 인스턴스 간 상태를 공유하지만, DynamoDB 장애 시 fail-open 정책으로 요청을 허용합니다.
+#### 3.2.3 hostPath 스토리지 단일 장애점
 
-| 설계 | 인메모리 (로컬) | DynamoDB (프로덕션) | 잔여 한계 |
-| ------ | ------------- | ------------------- | --------- |
-| 로그인 제한 | 5 × N회/60초 (인스턴스별) | 5회/60초 (전역) | DynamoDB 장애 시 fail-open |
-| 게시글 작성 | 10 × N회/60초 (인스턴스별) | 10회/60초 (전역) | DynamoDB 장애 시 fail-open |
+K8s 데이터 계층(MySQL StatefulSet, Redis, Prometheus)은 hostPath PV를 사용합니다. 해당 노드 장애 시 데이터 접근이 불가합니다.
 
-**영향**: DynamoDB 백엔드 도입으로 정상 상황에서는 정확한 전역 제한이 가능하지만, DynamoDB 장애 시에는 가용성 우선(fail-open)으로 제한이 무효화됩니다. WAF 등 상위 계층 방어를 추가하면 이 잔여 위험을 완화할 수 있습니다.
+| 데이터 | 스토리지 | 백업 | 복구 방법 | 데이터 손실 |
+| --- | --- | --- | --- | --- |
+| K8s MySQL | hostPath PV | CronJob → S3 | S3에서 복원 | 최대 24시간 |
+| Redis | hostPath PV | 없음 (휘발성) | 재시작 시 빈 상태 | 허용 가능 |
+| Prometheus | hostPath PV | 없음 | 메트릭 재수집 | 이력 손실 |
+| etcd | Master 로컬 | **미설정** | **복구 불가** | **클러스터 손실** |
 
-#### 3.2.4 EFS 처리량 한계
+> **etcd 백업 미설정은 가장 심각한 위험 요소입니다.** Master 노드 장애 시 K8s 클러스터 전체를 재생성해야 합니다.
 
-| 모드 | 기본 처리량 | 버스트 크레딧 |
-| -------- | ---------------------- | ---------------------------------------- |
-| Bursting | 50 KB/s per GiB stored | 100 MiB/s (크레딧 소진 시 기본으로 복귀) |
+#### 3.2.4 단일 AZ 배치
 
-**영향**: 저장 데이터가 적을 때(1 GiB 미만) 기본 처리량이 50 KB/s 이하로 떨어질 수 있어, 다중 이미지 업로드가 동시에 발생하면 지연이 발생합니다.
+현재 K8s 노드는 모두 `ap-northeast-2b`에 배치되어 있습니다. `c7i-flex.large`가 `ap-northeast-2a`를 지원하지 않기 때문입니다. AZ 장애 시 전체 K8s 클러스터가 영향을 받습니다.
 
 ### 3.3 장애 전파 구조
 
-#### 시나리오 1: RDS 장애
+#### 시나리오 1: RDS Primary 장애
 
 ```mermaid
 flowchart TD
     RDS_Fail["RDS Primary 다운"]
 
-    RDS_Fail -->|"커넥션 실패"| Lambda_Err["Lambda 500 에러<br/>(모든 DB 의존 API)"]
-    Lambda_Err --> Auth_Fail["인증 불가<br/>로그인·회원가입"]
-    Lambda_Err --> Read_Fail["읽기 불가<br/>게시글·댓글 조회"]
-    Lambda_Err --> Write_Fail["쓰기 불가<br/>게시글·댓글 작성"]
+    RDS_Fail -->|"커넥션 실패"| API_Err["API Pod 500 에러<br/>(모든 DB 의존 API)"]
+    API_Err --> Auth_Fail["인증 불가<br/>(JWT 검증에 DB 필요)"]
+    API_Err --> Read_Fail["읽기 불가<br/>(게시글·댓글·알림)"]
+    API_Err --> Write_Fail["쓰기 불가<br/>(게시글·좋아요·DM)"]
 
     Auth_Fail --> Total["전면 장애"]
     Read_Fail --> Total
     Write_Fail --> Total
 
-    RDS_Fail --> Health_Fail["/health 실패"]
-
-    S3_OK["정적 파일 정상<br/>(CloudFront 캐시)"]
+    FE_OK["프론트엔드 정상<br/>(nginx Pod — 정적 파일)"]
+    WS_Partial["WebSocket 부분 정상<br/>(Redis만 의존하는 기능)"]
+    Redis_OK["Redis 정상<br/>(Rate Limiter 유지)"]
 
     style RDS_Fail fill:#ef5350,color:#fff,stroke:#b71c1c
-    style Lambda_Err fill:#ef5350,color:#fff,stroke:#b71c1c
     style Total fill:#b71c1c,color:#fff,stroke:#7f0000,stroke-width:2px
-    style Health_Fail fill:#ef5350,color:#fff,stroke:#b71c1c
-    style Auth_Fail fill:#ff8a65,stroke:#e64a19
-    style Read_Fail fill:#ff8a65,stroke:#e64a19
-    style Write_Fail fill:#ff8a65,stroke:#e64a19
-    style S3_OK fill:#66bb6a,color:#fff,stroke:#2e7d32
+    style FE_OK fill:#66bb6a,color:#fff,stroke:#2e7d32
+    style WS_Partial fill:#ffa726,color:#fff,stroke:#e65100
+    style Redis_OK fill:#66bb6a,color:#fff,stroke:#2e7d32
 ```
 
-**영향 범위**: 전면 장애. RDS는 단일 의존점(Single Point of Failure)으로, 모든 API가 DB에 의존합니다.
-**복구**: Multi-AZ(Prod) 환경에서는 자동 페일오버(60~120초). Dev/Staging은 수동 복구 필요.
+| 항목 | 값 |
+| --- | --- |
+| **영향 범위** | 전면 장애 — 모든 API가 DB에 의존 |
+| **복구 (Prod)** | Multi-AZ 자동 페일오버 60~120초 |
+| **복구 (Dev/Staging)** | 수동 복구 — 자동 백업에서 새 인스턴스 생성 (수 시간) |
+| **감지** | API Pod 500 에러율 급증 → Prometheus 알림 |
 
-#### 시나리오 2: Lambda 스로틀링
+#### 시나리오 2: Worker 노드 1대 장애
 
 ```mermaid
 flowchart TD
-    Traffic["트래픽 급증<br/>계정 동시성 한도 도달"]
+    Node_Fail["Worker 노드 1대 다운"]
 
-    Traffic -->|"429 ThrottleError"| Throttle["Lambda 스로틀링<br/>신규 요청 거부"]
-    Throttle --> User_Err["API Gateway 502<br/>사용자 에러 페이지"]
+    Node_Fail -->|"Pod 재스케줄링"| Reschedule["K8s 자동 복구<br/>남은 노드에 Pod 재배치"]
+    Reschedule --> Degraded["일시적 성능 저하<br/>(노드 1대로 운영,<br/>HPA 스케일 제한)"]
 
-    Traffic -->|"콜드 스타트"| Slow["응답 지연 3-10초"]
-    Slow --> Timeout["프론트엔드 타임아웃<br/>15초 초과 시 실패"]
+    Node_Fail -->|"hostPath PV 손실"| Data_Risk{"해당 노드에<br/>MySQL/Redis PV?"}
+    Data_Risk -->|"예"| Data_Loss["데이터 접근 불가<br/>MySQL: S3 백업 복원 (RPO 24h)<br/>Redis: 빈 상태 재시작"]
+    Data_Risk -->|"아니오"| Minor["데이터 영향 없음<br/>App Pod만 재배치"]
 
-    Existing["기존 Warm 인스턴스<br/>정상 처리 유지"]
-
-    style Traffic fill:#ffa726,color:#fff,stroke:#e65100,stroke-width:2px
-    style Throttle fill:#ef5350,color:#fff,stroke:#b71c1c
-    style User_Err fill:#ef5350,color:#fff,stroke:#b71c1c
-    style Slow fill:#ffcc02,stroke:#f57f17
-    style Timeout fill:#ff8a65,stroke:#e64a19
-    style Existing fill:#66bb6a,color:#fff,stroke:#2e7d32
+    style Node_Fail fill:#ef5350,color:#fff,stroke:#b71c1c
+    style Reschedule fill:#42a5f5,color:#fff,stroke:#1565c0
+    style Degraded fill:#ffa726,color:#fff,stroke:#e65100
+    style Data_Loss fill:#ef5350,color:#fff,stroke:#b71c1c
+    style Minor fill:#66bb6a,color:#fff,stroke:#2e7d32
 ```
 
-**영향 범위**: 부분 장애. 기존 warm 인스턴스가 처리하는 요청은 정상이지만, 신규 요청이 거부됩니다.
-**복구**: 트래픽 감소 시 자동 복구. 계정 한도 증가 요청(AWS Support) 또는 Provisioned Concurrency 증설로 예방.
+| 항목 | 값 |
+| --- | --- |
+| **영향 범위** | 부분 장애 — K8s가 Pod를 남은 노드에 자동 재배치 |
+| **RTO** | ~30초 (Pod 재스케줄링) |
+| **위험** | hostPath PV가 해당 노드에 바인딩된 경우 데이터 손실 |
 
-#### 시나리오 3: NAT Gateway 장애
+#### 시나리오 3: AZ 장애 (ap-northeast-2b 전체)
 
 ```mermaid
 flowchart TD
-    NAT_Fail["NAT Gateway 장애<br/>단일 AZ 영향"]
+    AZ_Fail["ap-northeast-2b AZ 장애"]
 
-    NAT_Fail -->|"외부 통신 불가"| SSM_Fail["SSM 조회 실패"]
-    SSM_Fail -->|"시크릿 미확보"| Lambda_Fail["Lambda 콜드 스타트 실패<br/>해당 AZ 신규 인스턴스"]
+    AZ_Fail -->|"모든 K8s 노드 영향"| K8s_Down["K8s 클러스터 전체 다운<br/>(Master + Worker 모두 2b)"]
+    K8s_Down --> API_Down["API 불가"]
+    K8s_Down --> FE_Down["프론트엔드 불가"]
+    K8s_Down --> WS_Down["WebSocket 불가"]
 
-    NAT_Fail -->|"기존 인스턴스"| Existing["이미 초기화된 Lambda<br/>정상 동작 유지"]
+    API_Down --> Total["전면 장애<br/>서비스 완전 중단"]
+    FE_Down --> Total
+    WS_Down --> Total
 
-    Other_AZ["다른 AZ NAT Gateway<br/>정상 운영 (Prod만)"]
+    AZ_Fail -.->|"RDS Primary (2a)"| RDS_OK["RDS Primary 정상<br/>(ap-northeast-2a)"]
 
-    style NAT_Fail fill:#ef5350,color:#fff,stroke:#b71c1c,stroke-width:2px
-    style SSM_Fail fill:#ff8a65,stroke:#e64a19
-    style Lambda_Fail fill:#ef5350,color:#fff,stroke:#b71c1c
-    style Existing fill:#66bb6a,color:#fff,stroke:#2e7d32
-    style Other_AZ fill:#66bb6a,color:#fff,stroke:#2e7d32
+    style AZ_Fail fill:#b71c1c,color:#fff,stroke:#7f0000,stroke-width:2px
+    style K8s_Down fill:#ef5350,color:#fff,stroke:#b71c1c
+    style Total fill:#b71c1c,color:#fff,stroke:#7f0000,stroke-width:2px
+    style RDS_OK fill:#66bb6a,color:#fff,stroke:#2e7d32
 ```
 
-**영향 범위**:
+| 항목 | 값 |
+| --- | --- |
+| **영향 범위** | K8s 전면 장애 — RDS만 다른 AZ에서 생존 |
+| **RTO** | 수 시간 (다른 AZ에서 K8s 재구성 필요) |
+| **근본 원인** | c7i-flex.large가 ap-northeast-2a 미지원 → 단일 AZ 강제 |
+| **완화** | 인스턴스 타입 변경(c6i.large 등) 후 멀티 AZ 배치 |
 
-- **Dev/Staging (단일 NAT)**: 전면 장애 — 모든 새 Lambda 인스턴스가 콜드 스타트 실패.
-- **Prod (AZ별 NAT)**: 한 AZ만 영향. 다른 AZ는 정상.
+#### 시나리오 4: 트래픽 급증 (Stage 2 전환기)
+
+```mermaid
+flowchart TD
+    Viral["바이럴 트래픽<br/>피크 500명 동시 접속"]
+
+    Viral -->|"1단계"| HPA_Scale["HPA 감지<br/>API Pod 2→4 증가"]
+    HPA_Scale -->|"노드 자원 소진"| Pod_Pending["추가 Pod Pending<br/>(스케줄링 불가)"]
+
+    Viral -->|"2단계"| DB_Pressure["RDS CPU 급증<br/>FULLTEXT 검색 + 대량 SELECT"]
+    DB_Pressure --> Slow_Query["쿼리 응답 지연<br/>(수백 ms → 수 초)"]
+
+    Viral -->|"3단계"| Redis_Pressure["Redis 메모리 증가<br/>Rate Limit 키 폭발"]
+
+    Pod_Pending --> Cascade["연쇄 장애"]
+    Slow_Query --> Cascade
+    Cascade --> User_Impact["사용자 경험 저하<br/>타임아웃 · 에러 페이지"]
+
+    style Viral fill:#ff9800,color:#fff,stroke:#e65100,stroke-width:2px
+    style Pod_Pending fill:#fce4ec,stroke:#c62828
+    style Slow_Query fill:#fce4ec,stroke:#c62828
+    style Cascade fill:#ef5350,color:#fff,stroke:#b71c1c
+    style User_Impact fill:#b71c1c,color:#fff,stroke:#7f0000
+```
+
+| 병목 지점 | 현재 한도 | 포화 시점 | 완화 방안 |
+| --- | --- | --- | --- |
+| Worker 노드 CPU | 4 vCPU (2대) | Stage 2 (~500 동시) | Worker 노드 추가 또는 Cluster Autoscaler |
+| RDS CPU | 2 vCPU (t3.medium) | Stage 2 | Read Replica 도입 |
+| RDS 커넥션 | ~120 (t3.medium) | Stage 2 (Pod 증가 시) | 인스턴스 스케일 업 |
+| Redis 메모리 | ~256 MB (기본) | Stage 3 | maxmemory-policy 설정, 스케일 업 |
 
 ---
 
@@ -659,164 +555,186 @@ flowchart TD
 #### 환경별 HA 설정 비교
 
 | 항목 | Dev | Staging | Prod |
-| ------ | ----- | --------- | ------ |
-| **가용 영역** | 2-AZ | 2-AZ | 2-AZ |
-| **NAT Gateway** | 1개 (단일 AZ) | 1개 (단일 AZ) | 2개 (AZ당 1개) |
+| --- | --- | --- | --- |
+| **K8s 토폴로지** | 3대 (1M + 2W) | **6대 (3M + 2W + HAProxy)** | **6대 (3M + 2W + HAProxy)** |
+| **API 서버 HA** | 단일 Master 직접 접근 | **HAProxy L4 LB → 3 Master** | **HAProxy L4 LB → 3 Master** |
+| **API Pod HA** | HPA min 2 / max 4 | HPA min 2 / max 4 | HPA min 2 / max 4 |
+| **가용 영역** | 단일 AZ (2b) | 단일 AZ (2b) | **멀티 AZ 검토 중** |
+| **NAT Gateway** | 1개 | 1개 | 2개 (AZ당 1개) |
+| **RDS 인스턴스** | db.t3.micro | db.t3.micro | db.t3.medium |
 | **RDS Multi-AZ** | 비활성화 | 비활성화 | **활성화** |
-| **RDS 백업 보존** | 1일 | 3일 | **14일** |
+| **RDS 백업 보존** | 1일 | 1일 | **14일** |
 | **RDS 삭제 보호** | 비활성화 | 비활성화 | **활성화** |
-| **RDS Final Snapshot** | 비활성화 | 비활성화 | **활성화** |
-| **Lambda Provisioned** | 0 | 0 | **5** |
-| **EFS 마운트 타겟** | 2-AZ | 2-AZ | 2-AZ |
-| **CloudFront** | 글로벌 | 글로벌 | 글로벌 |
+| **MySQL 백업 (CronJob)** | S3 일일 백업 | S3 일일 백업 | S3 일일 백업 |
+| **HPA** | CPU 70% 기준 | CPU 70% 기준 | CPU 70% 기준 |
 | **S3 내구성** | 99.999999999% | 99.999999999% | 99.999999999% |
-| **CloudWatch 알람** | 6개 | 6개 | 6개 |
-| **Log 보존** | 7일 | 14일 | **30일** |
-| **CloudTrail** | 30일 | 60일 | **90일** |
+| **모니터링** | Prometheus + Grafana | Prometheus + Grafana | Prometheus + Grafana |
+| **CloudTrail 보존** | 30일 | 60일 | **90일** |
 | **ECR 이미지 보존** | 3개 | 10개 | **20개** |
 
 #### 이미 적용된 HA 요소
 
-1. **Prod RDS Multi-AZ**: Primary 장애 시 Standby로 자동 페일오버 (60~120초)
-2. **Prod NAT Gateway Per-AZ**: 한 AZ의 NAT 장애 시 다른 AZ 정상 운영
-3. **EFS 3-AZ 자동 복제**: 파일 시스템 자체가 다중 AZ에 자동 분산
-4. **CloudFront 글로벌 엣지**: AWS 관리형 HA, 200+ 엣지 로케이션
-5. **S3 99.999999999% 내구성**: 99.999999999% 데이터 내구성
-6. **Lambda 자동 스케일링**: 요청량에 따라 자동으로 인스턴스 생성
+1. **K8s Pod 자동 복구**: 노드 장애 시 Pod를 남은 노드에 자동 재스케줄링
+2. **HPA 자동 스케일링**: CPU 70% 기준 API Pod 2~4개 자동 조절
+3. **Prod RDS Multi-AZ**: Primary 장애 시 Standby 자동 페일오버 (60~120초)
+4. **MySQL S3 백업**: CronJob으로 일일 mysqldump → S3 업로드
+5. **S3 99.999999999% 내구성**: 업로드 파일·백업 영구 보존
+6. **Prometheus 모니터링**: ServiceMonitor 자동 메트릭 수집 + Grafana 시각화
 7. **Terraform State 보호**: S3 버전 관리 + DynamoDB 동시 수정 잠금
-8. **Blue/Green 배포**: Lambda Alias `live` 기반 즉시 트래픽 전환 + Health check 게이트 + 수동 롤백 워크플로우
+8. **롤링 업데이트**: 새 Pod Ready → 기존 Pod 종료 (무중단 배포)
+9. **HA 컨트롤 플레인 설계 완료** (Staging/Prod): Master 3대 + HAProxy L4 LB. Terraform `master_count`/`haproxy_enabled` 변수로 환경별 전환. Kustomize overlay로 환경 분기. Free Tier 제약으로 배포 보류 중
+
+#### 서버리스 대비 K8s의 HA 변화
+
+| 항목 | 서버리스 (이전) | K8s (현재) | 평가 |
+| --- | --- | --- | --- |
+| 콜드 스타트 | 3~10초 | 없음 | **개선** |
+| DB 커넥션 관리 | 폭발 위험 (Lambda별 풀) | 예측 가능 (Pod 수 제어) | **개선** |
+| 자동 스케일링 범위 | 무제한 (Lambda) | 노드 리소스 한도 | 제약 |
+| 관리형 HA | AWS 관리 (Lambda, API GW) | 자체 관리 (kubeadm) | 트레이드오프 |
+| AZ 분산 | Lambda ENI 자동 분산 | 단일 AZ (현재) | **약화** |
+| 데이터 백업 | EFS 3-AZ 자동 복제 | hostPath + S3 CronJob | **약화** |
 
 ### 4.2 가용 영역 분산 전략
 
-#### 현재 상태
+#### 현재 상태 (Dev — 배포 완료)
 
 ```mermaid
 flowchart LR
+    subgraph AZ_B["ap-northeast-2b (K8s 노드 전체)"]
+        direction TB
+        Master["Master"]
+        Worker1["Worker 1"]
+        Worker2["Worker 2"]
+        Master ~~~ Worker1 ~~~ Worker2
+    end
+
     subgraph AZ_A["ap-northeast-2a"]
         direction TB
-        NAT_A["NAT Gateway"]
-        Lambda_A["Lambda ENI"]
         RDS_A["RDS Primary"]
-        EFS_MA["EFS Mount"]
-        NAT_A ~~~ Lambda_A ~~~ RDS_A ~~~ EFS_MA
+        Bastion["Bastion"]
+        RDS_A ~~~ Bastion
     end
 
-    subgraph AZ_B["ap-northeast-2b"]
-        direction TB
-        NAT_B["NAT Gateway<br/>(Prod만)"]
-        Lambda_B["Lambda ENI"]
-        RDS_B["RDS Standby<br/>(Prod만)"]
-        EFS_MB["EFS Mount"]
-        NAT_B ~~~ Lambda_B ~~~ RDS_B ~~~ EFS_MB
-    end
-
-    RDS_A -. "동기 복제" .-> RDS_B
-    EFS_MA -. "자동 복제" .-> EFS_MB
-
-    style AZ_A fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    style AZ_B fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    style RDS_A fill:#fff3e0,stroke:#e65100
-    style RDS_B fill:#fff3e0,stroke:#e65100
+    style AZ_B fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style AZ_A fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
 ```
 
-#### 개선안: 3-AZ 확장
+**약점**: K8s 노드 전체가 단일 AZ에 배치 — AZ 장애 시 전면 중단.
 
-| 항목 | 현재 (2-AZ) | 개선 (3-AZ) | 비용 증가 |
-| ------ | ------------- | ------------- | ----------- |
-| Private Subnet | 2개 | 3개 | VPC 무료 |
-| NAT Gateway | 2개 (Prod) | 3개 | +~$32/월 |
-| EFS Mount Target | 2개 | 3개 | 무료 (EFS 자동) |
-| RDS | Multi-AZ (2) | Multi-AZ (자동) | 변동 없음 |
-
-**권장**: 현재 2-AZ 구성은 대부분의 장애 시나리오에 충분합니다. Stage 3(DAU 30,000) 진입 시 3-AZ로 확장을 고려합니다.
-
-### 4.3 Auto Scaling / Load Balancer 활용 방안
-
-#### 4.3.1 Lambda Provisioned Concurrency Auto Scaling
-
-현재 Prod에서 Provisioned Concurrency가 5로 고정되어 있습니다. Application Auto Scaling을 적용하면 트래픽에 따라 자동 조절할 수 있습니다.
+#### 설계 완료 (Staging/Prod HA — 배포 보류)
 
 ```mermaid
 flowchart LR
-    CW_Metric["CloudWatch 메트릭<br/>ProvisionedConcurrency<br/>Utilization"]
-    CW_Metric -->|"70% 초과"| Scale_Out["Scale Out<br/>최대 50"]
-    CW_Metric -->|"30% 미만"| Scale_In["Scale In<br/>최소 5"]
+    subgraph AZ_B["ap-northeast-2b (K8s HA 클러스터)"]
+        direction TB
+        HAProxy["HAProxy<br/>L4 LB · TCP 6443"]
+        Master1["Master 1"]
+        Master2["Master 2"]
+        Master3["Master 3"]
+        Worker1["Worker 1"]
+        Worker2["Worker 2"]
+        HAProxy ~~~ Master1 ~~~ Master2 ~~~ Master3
+        Worker1 ~~~ Worker2
+    end
 
-    Schedule["예약 스케줄링<br/>수업 후 18:00-22:00"]
-    Schedule -->|"Target: 20"| Scheduled_Scale["피크 시간<br/>사전 확보"]
+    subgraph AZ_A["ap-northeast-2a"]
+        direction TB
+        RDS_A["RDS Primary"]
+    end
 
-    style CW_Metric fill:#fff3e0,stroke:#e65100
-    style Scale_Out fill:#ef5350,color:#fff,stroke:#b71c1c
-    style Scale_In fill:#66bb6a,color:#fff,stroke:#2e7d32
-    style Schedule fill:#e3f2fd,stroke:#1565c0
-    style Scheduled_Scale fill:#42a5f5,color:#fff,stroke:#1565c0
+    style AZ_B fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style AZ_A fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
 ```
 
-**구현 방법** (Terraform):
+> **배포 보류 사유**: AWS Free Tier EIP 한도(리전당 5개) 초과. HA 클러스터에 EIP 4개 추가 필요 → 계정 업그레이드 또는 Service Quotas 상향 후 배포 가능.
 
-```hcl
-resource "aws_appautoscaling_target" "lambda" {
-  max_capacity       = 50
-  min_capacity       = 5
-  resource_id        = "function:${lambda_function_name}:${lambda_alias}"
-  scalable_dimension = "lambda:function:ProvisionedConcurrency"
-  service_namespace  = "lambda"
-}
+#### 개선안: 멀티 AZ K8s 배치
 
-resource "aws_appautoscaling_policy" "lambda" {
-  name               = "lambda-concurrency-tracking"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.lambda.resource_id
-  scalable_dimension = aws_appautoscaling_target.lambda.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.lambda.service_namespace
+| 항목 | 현재 (단일 AZ) | 개선 (멀티 AZ) | 비고 |
+| --- | --- | --- | --- |
+| K8s Worker | 2대 (2b) | 2대 (2a + 2b 분산) | 인스턴스 타입 변경 필요 |
+| AZ 장애 영향 | 전면 장애 | 1대 Worker 유지 (성능 저하) | 가용성 확보 |
+| 비용 | 동일 | 동일 | 인스턴스 수 불변 |
 
-  target_tracking_scaling_policy_configuration {
-    target_value = 0.7  # 70% 사용률 유지
-    predefined_metric_specification {
-      predefined_metric_type = "LambdaProvisionedConcurrencyUtilization"
-    }
-  }
-}
+**제약**: `c7i-flex.large`가 `ap-northeast-2a` 미지원. `c6i.large` 등으로 변경 필요.
+
+### 4.3 Auto Scaling 및 Load Balancer 활용 방안
+
+#### 4.3.1 현재 Auto Scaling (HPA)
+
+```mermaid
+flowchart LR
+    MetricsSrv["metrics-server<br/>CPU 메트릭 수집"]
+    MetricsSrv -->|"averageUtilization > 70%"| HPA["HPA<br/>community-api-hpa"]
+    HPA -->|"Pod 수 조절"| Pods["API Pod<br/>min: 2 → max: 4"]
+
+    subgraph Resources["Pod 리소스 설정"]
+        Req["requests:<br/>CPU 250m · Memory 512Mi"]
+        Lim["limits:<br/>CPU 500m"]
+    end
+
+    style HPA fill:#42a5f5,color:#fff,stroke:#1565c0
 ```
 
-**비용 영향**: Provisioned Concurrency는 할당된 만큼 과금됩니다 ($0.000004646/GiB-초). 50개 유지 시 월 ~$160 (1024MB 기준).
+**현재 한계**: HPA는 Pod 수만 조절하며, 노드 수는 고정(2대)입니다. Pod max 4에 도달하거나 노드 리소스가 소진되면 더 이상 스케일링할 수 없습니다.
 
-#### 4.3.2 RDS Read Replica + 읽기 분리
+#### 4.3.2 개선안: Cluster Autoscaler
+
+Cluster Autoscaler를 도입하면 Pod Pending 상태를 감지하여 자동으로 Worker 노드를 추가합니다.
+
+```mermaid
+flowchart LR
+    HPA["HPA<br/>Pod 수 증가 요청"]
+    HPA -->|"노드 리소스 부족"| Pending["Pod Pending"]
+    Pending -->|"CA 감지"| CA["Cluster Autoscaler<br/>새 EC2 인스턴스 추가"]
+    CA -->|"노드 Ready"| Schedule["Pod 스케줄링 성공"]
+
+    style Pending fill:#fce4ec,stroke:#c62828
+    style CA fill:#42a5f5,color:#fff,stroke:#1565c0
+    style Schedule fill:#66bb6a,color:#fff,stroke:#2e7d32
+```
+
+| 항목 | 현재 | CA 도입 후 |
+| --- | --- | --- |
+| 노드 수 | 2대 (고정) | 2~5대 (동적) |
+| Pod Pending 대응 | 수동 노드 추가 | 자동 감지 + 노드 추가 |
+| 스케일 다운 | 수동 | 부하 감소 시 자동 노드 제거 |
+| 비용 | 고정 ~$106/월 | 부하 비례 ~$106~$265/월 |
+
+#### 4.3.3 Load Balancer 계층
+
+| 계층 | 현재 | 목적 |
+| --- | --- | --- |
+| **L7 (HTTP)** | nginx Ingress Controller (hostNetwork DaemonSet) | HTTPS 종단, 경로 기반 라우팅 |
+| **L4 (TCP)** | HAProxy (Staging/Prod) | K8s API 서버 로드밸런싱 (TCP 6443) |
+| **DNS** | Route 53 (A 레코드 → Worker IP) | 도메인 → K8s Worker 매핑 |
+
+**외부 LB 미사용 이유**: hostNetwork DaemonSet으로 Ingress Controller가 노드 IP에 직접 바인딩됩니다. 별도의 AWS ALB/NLB 없이도 트래픽을 수신할 수 있어 비용을 절감합니다.
+
+**개선안 (Stage 2 이상)**: AWS NLB를 도입하면 멀티 AZ 트래픽 분산과 헬스 체크 기반 자동 장애 감지가 가능합니다.
+
+#### 4.3.4 RDS Read Replica + 읽기 분리
 
 | 작업 유형 | 비율 (추정) | 대상 |
-| ----------- | ------------ | ------ |
+| --- | --- | --- |
 | 읽기 (GET) | ~80% | 게시글 목록, 상세, 댓글, 알림 |
 | 쓰기 (POST/PUT/DELETE) | ~20% | 게시글 작성, 댓글, 좋아요, 북마크 |
 
-**구현 방법**: RDS Read Replica를 추가하고, 애플리케이션에서 읽기/쓰기 커넥션 풀을 분리합니다.
-
 ```mermaid
 flowchart LR
-    Lambda["Lambda<br/>FastAPI"]
+    API["API Pod<br/>FastAPI"]
 
-    Lambda -->|"INSERT · UPDATE · DELETE<br/>transactional()"| Primary["RDS Primary<br/>Writer"]
-    Lambda -->|"SELECT<br/>get_connection()"| Replica["RDS Read Replica<br/>Reader"]
+    API -->|"INSERT · UPDATE · DELETE<br/>transactional()"| Primary["RDS Primary<br/>Writer"]
+    API -->|"SELECT<br/>get_connection()"| Replica["RDS Read Replica<br/>Reader"]
     Primary -. "비동기 복제" .-> Replica
 
-    style Lambda fill:#fce4ec,stroke:#c62828
+    style API fill:#fce4ec,stroke:#c62828
     style Primary fill:#fff3e0,stroke:#e65100
     style Replica fill:#e8f5e9,stroke:#2e7d32
 ```
 
-**비용 영향**: `db.t3.medium` Read Replica 추가 시 월 ~$49.
-
-#### 4.3.3 Load Balancer에 대한 고려
-
-현재 아키텍처(API Gateway → Lambda)에서는 **ALB(Application Load Balancer)가 불필요**합니다.
-
-| 비교 항목 | API Gateway (현재) | ALB + Lambda |
-| ----------- | ------------------- | ------------- |
-| 비용 모델 | 요청당 과금 ($1/백만 요청) | 고정비 + LCU |
-| 관리 부담 | 완전 관리형 | 타겟 그룹, 헬스체크 설정 |
-| 기능 | CORS, 인증, 스테이지, 접근 로깅 내장 | L7 라우팅, 가중 타겟 그룹 |
-| 적합 시나리오 | 서버리스, 저~중 트래픽 | 컨테이너(ECS/EKS), 고트래픽 |
-
-**결론**: Stage 2까지는 API Gateway가 비용 효율적입니다. Stage 3에서 ECS/EKS 마이그레이션 시 ALB 도입을 고려합니다.
+**비용 영향**: `db.t3.medium` Read Replica 추가 시 월 ~$49. 읽기 부하의 80%를 분산하여 Primary의 CPU 사용률을 대폭 절감합니다.
 
 ### 4.4 데이터 이중화 및 백업 전략
 
@@ -824,121 +742,83 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    subgraph RDS_Backup["RDS MySQL — Prod"]
-        Auto["자동 백업<br/>매일 03:00-04:00 UTC<br/>보존: 14일"]
-        MultiAZ["Multi-AZ 동기 복제<br/>Standby: 다른 AZ"]
-        Snap["수동 스냅샷<br/>무기한 보존"]
-        Final["최종 스냅샷<br/>삭제 시 자동 생성"]
+    subgraph RDS_Backup["RDS MySQL (Prod) — 관리형"]
+        Auto["자동 백업<br/>매일 · 보존 14일"]
+        MultiAZ["Multi-AZ 동기 복제<br/>(Primary ↔ Standby)"]
+        Final["최종 스냅샷<br/>(삭제 시 자동 생성)"]
+        Delete_Protect["삭제 보호 활성화"]
     end
 
-    subgraph EFS_Backup["EFS"]
-        ThreeAZ["3-AZ 자동 복제<br/>AWS 관리형"]
-        EFS_Note["별도 백업 미설정<br/>AWS Backup 미적용"]
+    subgraph K8s_Backup["K8s MySQL (StatefulSet) — 자체 관리"]
+        CronJob["CronJob mysqldump<br/>매일 → S3 업로드"]
+        HostPath["hostPath PV<br/>⚠ 노드 장애 시 손실 위험"]
     end
 
-    subgraph S3_Backup["S3 — 프론트엔드"]
-        Versioning["버전 관리: 미설정<br/>Git에서 복구 가능"]
-        Durability["99.999999999% 내구성"]
+    subgraph S3_Backup["S3 — AWS 관리형"]
+        Durability["99.999999999% 내구성<br/>(11 nines)"]
+        Uploads["사용자 업로드 파일"]
+        MySQL_Dump["MySQL 백업 덤프"]
+        CT_Logs["CloudTrail 감사 로그"]
     end
 
-    subgraph TF_State["Terraform State"]
-        S3_Ver["S3 버전 관리: 활성화"]
-        DDB_Lock["DynamoDB 잠금"]
-        Noncurrent["90일 후 이전 버전 삭제"]
+    subgraph Redis_Data["Redis — 휘발성"]
+        Volatile["Rate Limit 카운터<br/>WebSocket 세션"]
+        No_Backup["백업 불필요<br/>재시작 시 자동 복구"]
     end
 
     style RDS_Backup fill:#e8f5e9,stroke:#2e7d32
-    style EFS_Backup fill:#fff3e0,stroke:#e65100
+    style K8s_Backup fill:#fff3e0,stroke:#e65100
     style S3_Backup fill:#e3f2fd,stroke:#1565c0
-    style TF_State fill:#f3e5f5,stroke:#6a1b9a
-    style EFS_Note fill:#ffcc02,stroke:#f57f17
+    style Redis_Data fill:#f5f5f5,stroke:#999
+    style HostPath fill:#ffcc02,stroke:#f57f17
 ```
 
-#### 4.4.2 RDS 백업 상세
+#### 4.4.2 백업 전략 상세
 
-| 설정 | Dev | Staging | Prod |
-| ------ | ----- | --------- | ------ |
-| 자동 백업 | 1일 보존 | 3일 보존 | **14일 보존** |
-| 백업 윈도우 | 03:00-04:00 UTC | 03:00-04:00 UTC | 03:00-04:00 UTC |
-| Multi-AZ | 미적용 | 미적용 | **적용** |
-| 삭제 보호 | 미적용 | 미적용 | **적용** |
-| 최종 스냅샷 | 미적용 | 미적용 | **적용** |
-| 스토리지 암호화 | AES-256 | AES-256 | AES-256 |
-| 스토리지 자동 확장 | 미적용 | 최대 100 GB | **최대 200 GB** |
+| 데이터 | 백업 방식 | RPO | 보존 기간 | 저장 위치 |
+| --- | --- | --- | --- | --- |
+| RDS (Prod) | AWS 자동 백업 + Multi-AZ 동기 복제 | ~0 | 14일 | AWS 관리 |
+| RDS (Dev/Staging) | AWS 자동 백업 | 최대 24시간 | 1일 | AWS 관리 |
+| K8s MySQL | CronJob mysqldump (일일) | 최대 24시간 | S3 lifecycle | S3 |
+| 사용자 업로드 | S3 직접 저장 (실시간) | 0 | 무기한 | S3 |
+| Terraform State | S3 버전 관리 + DynamoDB 잠금 | 0 | 무기한 | S3 |
+| CloudTrail 로그 | AWS 자동 수집 | 0 | 30~90일 (환경별) | S3 |
 
 #### 4.4.3 개선 권장사항
 
-| 항목 | 현재 | 개선안 | 우선순위 |
-| ------ | ------ | -------- | --------- |
-| EFS 백업 | 미설정 | AWS Backup으로 일일 스냅샷 (7일 보존) | 높음 |
-| S3 프론트엔드 버전 관리 | 미설정 | S3 Versioning 활성화 + 30일 Noncurrent 만료 | 중간 |
-| RDS 크로스리전 백업 | 미설정 | 크로스리전 스냅샷 복사 (재해 복구) | 낮음 (비용 고려) |
+| 항목 | 현재 | 개선안 | 우선순위 | 비용 |
+| --- | --- | --- | --- | --- |
+| K8s MySQL 스토리지 | hostPath PV | EBS CSI Driver + PVC | **높음** | EBS 비용만 |
+| **etcd 백업** | **미설정** | CronJob etcd snapshot → S3 | **높음** | 0 |
+| 멀티 AZ 노드 | 단일 AZ | 인스턴스 타입 변경 후 분산 | 중간 | 0 (같은 수) |
+| RDS 크로스리전 백업 | 미설정 | 크로스리전 스냅샷 복사 | 낮음 | 스냅샷 용량 |
 
 ### 4.5 장애 복구 전략 (RTO/RPO)
 
 #### 4.5.1 컴포넌트별 RTO/RPO 매트릭스
 
 | 컴포넌트 | RPO (데이터 손실 허용) | RTO (복구 시간 목표) | 복구 방법 |
-| ---------- | ---------------------- | -------------------- | --------- |
-| **CloudFront** | 0 (AWS 관리형) | ~0 (자동) | AWS 글로벌 인프라 자동 복구 |
-| **S3 (프론트엔드)** | 0 (99.999999999%) | ~0 (자동) | Git에서 재배포 가능 (< 5분) |
-| **API Gateway** | 0 (AWS 관리형) | ~0 (자동) | AWS 관리형 자동 복구 |
-| **Lambda** | 0 (Stateless) | **~10초** | Alias 전환으로 즉시 롤백 (Blue/Green) |
+| --- | --- | --- | --- |
+| **K8s API Pod** | 0 (Stateless) | **~30초** | K8s 자동 재스케줄링 |
+| **K8s Ingress** | 0 | ~30초 | DaemonSet 자동 재배치 |
 | **RDS (Prod)** | ~0 (동기 복제) | **60~120초** | Multi-AZ 자동 페일오버 |
-| **RDS (Dev/Stg)** | **최대 24시간** | **수 시간** | 자동 백업에서 수동 복원 |
-| **EFS** | 0 (3-AZ 복제) | ~0 (자동) | AWS 관리형 자동 복구 |
-| **EFS 데이터** | **최대 24시간** | **수 시간** | 백업 미설정 — 복구 불가 (개선 필요) |
-| **SSM 파라미터** | 0 (AWS 관리형) | ~0 | AWS 관리형, 별도 백업 불필요 |
+| **RDS (Dev/Staging)** | **최대 24시간** | **수 시간** | 자동 백업에서 수동 복원 |
+| **K8s MySQL** | **최대 24시간** | **수십 분** | S3 백업에서 복원 |
+| **Redis** | 전체 (휘발성) | ~10초 | Pod 재시작 (빈 상태 허용) |
+| **S3** | 0 (11 nines) | ~0 | AWS 관리형 자동 복구 |
+| **프론트엔드** | 0 (ECR 이미지) | ~5분 | `kubectl rollout restart` |
+| **etcd** | **전체 (백업 없음)** | **수 시간~일** | **클러스터 재생성** |
 
 #### 4.5.2 주요 장애 복구 절차
 
-##### Lambda 장애 복구 (Blue/Green 롤백)
+##### RDS 장애 복구 (Prod — Multi-AZ 자동 페일오버)
 
 ```mermaid
 flowchart LR
-    Detect["CloudWatch 알람<br/>Lambda Errors > 5"]
-    Identify["원인 파악<br/>로그 분석"]
-    Rollback["Alias 'live' 롤백<br/>이전 Lambda 버전으로 전환"]
-    Verify["헬스체크 확인<br/>GET /health → 200"]
-
-    Detect --> Identify --> Rollback --> Verify
-
-    style Detect fill:#ef5350,color:#fff,stroke:#b71c1c
-    style Identify fill:#fff3e0,stroke:#e65100
-    style Rollback fill:#42a5f5,color:#fff,stroke:#1565c0
-    style Verify fill:#66bb6a,color:#fff,stroke:#2e7d32
-```
-
-```bash
-# 방법 1: GitHub Actions 롤백 워크플로우 (권장)
-# Actions → rollback-backend.yml → 환경 선택 → 버전 지정 (선택)
-
-# 방법 2: CLI로 직접 alias 전환
-# 현재 alias가 가리키는 버전 확인
-aws lambda get-alias \
-  --function-name my-community-prod-backend \
-  --name live
-
-# 이전 버전으로 alias 전환 (즉시 적용)
-aws lambda update-alias \
-  --function-name my-community-prod-backend \
-  --name live \
-  --function-version {prev_version}
-```
-
-**RTO**: ~10초 (Alias 전환 즉시, 콜드 스타트 없음 — 이전 버전이 이미 warm 상태)
-**RPO**: 0 (Stateless)
-
-##### RDS 장애 복구
-
-**Prod (Multi-AZ 자동 페일오버)**:
-
-```mermaid
-flowchart LR
-    Primary_Fail["Primary 장애<br/>감지"]
-    DNS_Switch["RDS 엔드포인트<br/>DNS 전환 60-120초"]
+    Primary_Fail["Primary 장애 감지"]
+    DNS_Switch["RDS 엔드포인트<br/>DNS 자동 전환<br/>(60~120초)"]
     Standby_Promote["Standby → Primary<br/>자동 승격"]
-    App_Reconnect["Lambda 커넥션 풀<br/>자동 재연결"]
+    App_Reconnect["API Pod<br/>커넥션 풀 자동 재연결"]
 
     Primary_Fail --> DNS_Switch --> Standby_Promote --> App_Reconnect
 
@@ -948,78 +828,83 @@ flowchart LR
     style App_Reconnect fill:#66bb6a,color:#fff,stroke:#2e7d32
 ```
 
-**RTO**: 60~120초 (자동)
-**RPO**: ~0 (동기 복제)
+- **RTO**: 60~120초 (DNS 전환 시간)
+- **RPO**: ~0 (동기 복제)
+- **애플리케이션 영향**: 전환 중 DB 커넥션 에러 → aiomysql 풀이 자동 재연결
 
-**Dev/Staging (수동 복원)**:
-
-```bash
-# Point-in-Time 복원 (최대 백업 보존 기간 내)
-aws rds restore-db-instance-to-point-in-time \
-  --source-db-instance-identifier my-community-dev \
-  --target-db-instance-identifier my-community-dev-restored \
-  --restore-time "2026-03-02T12:00:00Z"
-```
-
-**RTO**: 수 시간 (인스턴스 생성 + 데이터 복원 + DNS 변경)
-**RPO**: 최대 24시간 (자동 백업 주기)
-
-##### S3 프론트엔드 복구
+##### K8s 배포 롤백
 
 ```bash
-# Git에서 재배포 (GitHub Actions 또는 수동)
-aws s3 sync ./html s3://my-community-prod-frontend/ \
-  --include "*.html" --include "*.css" --include "*.js"
-aws cloudfront create-invalidation \
-  --distribution-id {dist_id} --paths "/*"
+# 이전 버전으로 즉시 롤백
+kubectl -n app rollout undo deployment/community-api
+
+# 특정 리비전으로 롤백
+kubectl -n app rollout undo deployment/community-api --to-revision=3
+
+# 롤아웃 상태 확인
+kubectl -n app rollout status deployment/community-api
 ```
 
-**RTO**: < 5분
-**RPO**: 0 (Git 저장소가 원본)
+- **RTO**: ~30초 (Pod 재생성)
+- **RPO**: 0 (Stateless)
 
-#### 4.5.3 모니터링 → 알람 → 대응 플로우
+##### K8s MySQL 복원
+
+```bash
+# S3에서 최신 백업 다운로드
+aws s3 cp s3://my-community-dev-uploads/mysql-backups/latest.sql.gz ./
+
+# MySQL Pod에 복원
+gunzip latest.sql.gz
+kubectl -n data exec -i mysql-0 -- mysql -u root -p < latest.sql
+```
+
+- **RTO**: 수십 분 (백업 크기 의존)
+- **RPO**: 최대 24시간 (일일 백업 주기)
+
+#### 4.5.3 모니터링 → 알림 → 대응 플로우
 
 ```mermaid
 flowchart TD
-    subgraph Detect["1. 탐지 — CloudWatch 알람"]
-        Lambda_Err["Lambda Errors > 5<br/>(10분)"]
-        Lambda_Dur["Lambda Duration > 25초<br/>(15분)"]
-        RDS_CPU["RDS CPU > 80%<br/>(15분)"]
-        RDS_Storage["RDS Storage < 2GB<br/>(10분)"]
-        RDS_Conn["RDS Connections > 40<br/>(10분)"]
+    subgraph Detect["1. 탐지 — Prometheus"]
+        Pod_Restart["Pod 재시작 횟수 증가"]
+        CPU_High["노드 CPU > 80%"]
+        Mem_High["노드 메모리 > 80%"]
+        Pod_Pending["Pod Pending 상태"]
+        RDS_CPU["RDS CPU > 80%"]
+        API_5xx["API 5xx 에러율 급증"]
     end
 
-    subgraph Alert["2. 알림"]
-        SNS["SNS Topic<br/>이메일 · Slack"]
+    subgraph Alert["2. 알림 — Alertmanager"]
+        Slack["Slack 알림"]
+        Email["이메일 알림"]
     end
 
     subgraph Response["3. 대응"]
-        Lambda_Roll["Lambda 롤백<br/>이전 ECR 이미지"]
-        Lambda_Scale["Provisioned 증설"]
-        RDS_Scale["인스턴스 스케일 업"]
-        RDS_Read["Read Replica 추가"]
-        RDS_Clean["데이터 정리"]
+        Rollback["배포 롤백<br/>kubectl rollout undo"]
+        Scale_Node["Worker 노드 추가"]
+        Scale_Pod["HPA 상한 조정"]
+        RDS_Scale["RDS 인스턴스 스케일 업"]
+        Debug["로그 분석<br/>Grafana 대시보드"]
     end
 
-    Lambda_Err --> SNS
-    Lambda_Dur --> SNS
-    RDS_CPU --> SNS
-    RDS_Storage --> SNS
-    RDS_Conn --> SNS
+    Pod_Restart --> Slack
+    CPU_High --> Slack
+    Mem_High --> Slack
+    Pod_Pending --> Slack
+    RDS_CPU --> Email
+    API_5xx --> Slack
 
-    SNS --> Lambda_Roll
-    SNS --> Lambda_Scale
-    SNS --> RDS_Scale
-    SNS --> RDS_Clean
-    SNS --> RDS_Read
+    Slack --> Rollback
+    Slack --> Scale_Node
+    Email --> Scale_Pod
+    Email --> RDS_Scale
+    Slack --> Debug
 
     style Detect fill:#fff3e0,stroke:#e65100
     style Alert fill:#fce4ec,stroke:#c62828
     style Response fill:#e8f5e9,stroke:#2e7d32
-    style SNS fill:#ef5350,color:#fff,stroke:#b71c1c
 ```
-
-**현재 제한사항**: `alarm_sns_topic_arn`이 미설정 상태로, 알람 발생 시 대시보드에서만 확인 가능합니다. SNS 토픽 생성 및 이메일/Slack 구독 설정이 필요합니다.
 
 ---
 
@@ -1028,64 +913,62 @@ flowchart TD
 ### 5.1 현재 아키텍처의 강점
 
 | 강점 | 설명 |
-| ------ | ------ |
-| **완전 서버리스** | Lambda + API Gateway로 서버 관리 부담 제거, 유휴 시 비용 0 |
-| **IaC 완전 관리** | Terraform 19개 모듈로 전체 인프라 코드화, 환경 재현 가능 |
-| **보안 계층화** | VPC 격리, SSM 시크릿, OIDC 배포, MFA 강제, OAC 전용 S3 |
-| **환경별 차등 설계** | Dev(비용 최소) → Staging(중간) → Prod(HA 강화) 단계적 구성 |
-| **모니터링 기반** | CloudWatch 6개 알람 + 4개 위젯 대시보드 + CloudTrail 감사 |
-| **배포 안전성** | Blue/Green 배포로 Health check 통과 후에만 트래픽 전환, 실패 시 자동 유지 + 수동 롤백 워크플로우 |
-| **수평 확장 지원** | 분산 Rate Limiter(DynamoDB) + EventBridge 배치 작업으로 다중 인스턴스 환경 대응 |
-| **비용 효율** | Free Tier 활용(t3.micro), 단일 NAT(Dev), Provisioned Concurrency 최소화 |
+| --- | --- |
+| **통일 아키텍처** | 모든 환경이 동일 K8s 기반 + Kustomize overlay — "works in dev" = "works in prod" |
+| **콜드 스타트 제거** | Lambda 3~10초 콜드 스타트 완전 해소, 일관된 응답 시간 |
+| **예측 가능한 DB 커넥션** | HPA로 Pod 수 제어 → 커넥션 풀 폭발 위험 제거 |
+| **IaC 완전 관리** | Terraform 21개 모듈 + K8s 매니페스트로 전체 인프라 코드화 |
+| **보안 계층화** | VPC 격리, NetworkPolicy, OIDC 배포, 동적 SSH SG 관리 |
+| **K8s 네이티브 모니터링** | Prometheus + Grafana + ServiceMonitor 자동 메트릭 수집 |
+| **무중단 배포** | 롤링 업데이트 + 즉시 롤백 (`kubectl rollout undo`) |
 
-### 5.2 현재 아키텍처의 약점
+### 5.2 현재 아키텍처의 약점과 위험도
 
 | 약점 | 영향 | 위험 시점 | 심각도 |
-| ------ | ------ | ---------- | -------- |
-| DB 커넥션 폭발 위험 | Lambda 스케일 아웃 시 RDS 커넥션 한도 초과 | Lambda 20+ 동시 인스턴스 | 높음 |
-| Rate Limiter fail-open | DynamoDB 장애 시 제한 무효화 (가용성 우선 정책) | DynamoDB 서비스 장애 시 | 중간 |
-| EFS 백업 미설정 | 사용자 업로드 이미지 복구 불가 | **즉시** (데이터 손실 시 복구 수단 없음) | 높음 |
-| SNS 알림 미설정 | 장애 발생 시 대시보드 수동 확인 필요 | **즉시** (야간 장애 시 인지 지연) | 중간 |
-| 캐싱 부재 | 반복 조회(게시글 목록 등) 매번 DB 접근 | DAU 300+ (일일 30,000+ 요청) | 중간 |
-| Provisioned Concurrency 고정 | 트래픽 변동에 수동 대응 필요 | 피크 시간대 (수업 후 18-22시) | 낮음 |
+| --- | --- | --- | --- |
+| **etcd 백업 미설정** | Master 장애 시 클러스터 복구 불가 | 즉시 (Master 장애 시) | **Critical** |
+| **단일 AZ 배치** | AZ 장애 시 전면 중단 | 즉시 (AZ 장애 시) | **High** |
+| **hostPath PV 데이터 손실** | 노드 장애 시 MySQL/Prometheus 유실 | 즉시 (노드 장애 시) | **High** |
+| **Alertmanager 미설정** | 장애 인지 지연 (Grafana 수동 확인만) | 즉시 (야간 장애 시) | **Medium** |
+| kubeadm 자체 관리 부담 | 버전 업그레이드, 인증서 갱신 수동 | K8s 버전 EOL 시 | Medium |
+| Worker 2대 고정 | Stage 2 이상에서 리소스 부족 | DAU 3,000+ | Medium |
 
 ### 5.3 개선 로드맵
 
 #### 즉시 (비용 0~$5/월)
 
 | 항목 | 작업 | 효과 |
-| ------ | ------ | ------ |
-| SNS 알림 설정 | SNS 토픽 생성 + 이메일 구독 | 장애 즉시 인지 |
-| EFS 백업 | AWS Backup 일일 스냅샷 (7일 보존) | 업로드 파일 복구 가능 |
-| Lambda Insights | CloudWatch Lambda Insights 활성화 | 콜드 스타트, 메모리 사용량 상세 모니터링 |
+| --- | --- | --- |
+| **etcd 백업** | CronJob → S3 스냅샷 | Master 장애 시 클러스터 복구 가능 |
+| **Alertmanager 설정** | Slack/이메일 알림 연동 | 장애 즉시 인지 |
+| **Pod Disruption Budget** | API/WS Pod PDB 설정 | 유지보수 시 최소 가용성 보장 |
 
-#### 단기 (Stage 1: DAU 300, 월 ~$50 추가)
+#### 단기 — Stage 1 (DAU 300)
+
+| 항목 | 작업 | 효과 | 비용 |
+| --- | --- | --- | --- |
+| **EBS CSI Driver** | hostPath → EBS PVC | 노드 장애 시 데이터 보존 | EBS 용량만 |
+| **멀티 AZ 노드** | 인스턴스 타입 변경 (c6i.large) | AZ 장애 내성 확보 | 0 (같은 수) |
+| **HA 배포** | Staging/Prod 코드 활성화 | 컨트롤 플레인 이중화 | EIP 비용 |
+
+#### 중기 — Stage 2 (DAU 3,000, 월 ~$100 추가)
+
+| 항목 | 작업 | 효과 | 비용 |
+| --- | --- | --- | --- |
+| Worker 노드 추가 | 3~4대 | Pod 스케줄링 여유 확보 | ~$53/대·월 |
+| Redis Sentinel | Redis HA 구성 | Redis 단일 장애점 제거 | 0 (Pod 추가) |
+| RDS Read Replica | 읽기 전용 복제본 | 읽기 부하 80% 분산 | ~$49/월 |
+| CDN 도입 | CloudFront → FE Pod 캐싱 | 정적 파일 응답 속도 개선 | ~$10/월 |
+
+#### 장기 — Stage 3 (DAU 30,000)
 
 | 항목 | 작업 | 효과 |
-| ------ | ------ | ------ |
-| RDS Proxy | AWS RDS Proxy 도입 | Lambda ↔ RDS 커넥션 풀링, 커넥션 폭발 방지 |
-| Provisioned Auto Scaling | Application Auto Scaling 적용 | 트래픽 기반 콜드 스타트 자동 제거 |
-| WAF | AWS WAF + API Gateway 연동 | SQL Injection, XSS, Rate Limiting 중앙화 |
-
-#### 중기 (Stage 2: DAU 3,000, 월 ~$200 추가)
-
-| 항목 | 작업 | 효과 |
-| ------ | ------ | ------ |
-| ElastiCache (Redis) | 게시글 목록/인기 게시글 캐싱 | DB 부하 80% 감소 (읽기) |
-| RDS Read Replica | 읽기 전용 복제본 추가 | 쓰기/읽기 분리, DB 성능 2배 |
-| CloudFront API 캐싱 | GET /v1/posts 엣지 캐싱 (TTL 30초) | API 응답 속도 개선, Lambda 호출 감소 |
-| ~~분산 Rate Limiter~~ | ~~DynamoDB 기반 분산 Rate Limiter~~ | ~~구현 완료~~ (Fixed Window Counter + TTL, fail-open 정책) |
-
-#### 장기 (Stage 3: DAU 30,000)
-
-| 항목 | 작업 | 효과 |
-| ------ | ------ | ------ |
-| ECS/EKS 마이그레이션 | Lambda → 컨테이너 오케스트레이션 | 커넥션 풀 안정화, 장시간 처리 가능 |
-| Aurora Serverless v2 | RDS → Aurora | 자동 스케일링, 최대 128 ACU |
-| S3 이미지 마이그레이션 | EFS → S3 + CloudFront | 이미지 CDN 배포, 무제한 확장 |
-| 3-AZ 확장 | VPC 서브넷 3개 AZ로 확장 | 가용 영역 장애 내성 강화 |
-| ~~실시간 알림~~ | ~~WebSocket (API Gateway WebSocket API)~~ | ~~구현 완료~~ (별도 WebSocket API GW + Lambda + DynamoDB) |
+| --- | --- | --- |
+| **EKS 마이그레이션** | kubeadm → EKS | 관리형 컨트롤 플레인, 자동 업그레이드 |
+| **Cluster Autoscaler** | 노드 자동 스케일링 | Pod Pending 자동 해소 |
+| **Aurora Serverless v2** | RDS → Aurora | 자동 스케일링, 최대 128 ACU |
+| **Elasticsearch** | MySQL FULLTEXT → ES | 한국어 검색 성능 대폭 개선 |
 
 ---
 
-> **요약**: 현재 아키텍처는 서버리스 + IaC 기반으로 학교 규모(~100명)에 적합하며, Prod 환경에서 RDS Multi-AZ, Per-AZ NAT, Provisioned Concurrency 등 핵심 HA 요소가 적용되어 있습니다. 성장 단계에 따라 RDS Proxy → ElastiCache → Read Replica → 컨테이너 마이그레이션 순서로 점진적 개선이 가능한 아키텍처입니다.
+> **요약**: kubeadm K8s 전환으로 콜드 스타트 제거, DB 커넥션 안정화, 통일된 배포 파이프라인을 확보했습니다. Staging/Prod HA 아키텍처(Master 3대 + HAProxy)는 코드 완료 상태이며, Free Tier 제약 해소 후 즉시 배포 가능합니다. 현재 **가장 시급한 개선 과제는 etcd 백업, Alertmanager 설정, EBS CSI Driver 도입**이며, 모두 비용 0으로 달성 가능합니다. 성장 단계에 따라 HA 배포 → 멀티 AZ → Read Replica → EKS 순서로 점진적 확장이 가능합니다.
