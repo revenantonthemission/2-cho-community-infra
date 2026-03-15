@@ -38,7 +38,7 @@
 | **백엔드** | FastAPI (Python 3.11+, aiomysql) | 비동기 I/O, 자동 API 문서화 | K8s Pod에서 Uvicorn 실행, HPA 자동 스케일링 |
 | **데이터베이스** | MySQL 8.0 (RDS + K8s StatefulSet) | FULLTEXT 검색(ngram), 트랜잭션 격리 | RDS 관리형 + K8s 내부 MySQL 이중 구성 |
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, CronJob 주기적 정리 |
-| **인프라** | AWS (Terraform 21개 모듈) + kubeadm K8s | IaC 재현성, 컨테이너 오케스트레이션 학습 | 3개 환경(Dev/Staging/Prod) 통일 아키텍처 |
+| **인프라** | AWS (Terraform 활성 12개 + 레거시 9개 모듈) + kubeadm K8s | IaC 재현성, 컨테이너 오케스트레이션 학습 | 3개 환경(Dev/Staging/Prod) 통일 아키텍처 |
 | **CI/CD** | GitHub Actions + OIDC | 장기 자격 증명 없는 배포 | 리포지토리별 독립 워크플로우, 롤링 업데이트 |
 | **모니터링** | Prometheus + Grafana (kube-prometheus-stack) | K8s 네이티브 메트릭 수집 | ServiceMonitor 자동 수집, Alertmanager 연동 |
 | **부하 테스트** | Locust (gevent 기반) | 3종 사용자 시나리오 | 병목 사전 식별, 50~200 동시 사용자 검증 완료 |
@@ -917,7 +917,7 @@ flowchart TD
 | **통일 아키텍처** | 모든 환경이 동일 K8s 기반 + Kustomize overlay — "works in dev" = "works in prod" |
 | **콜드 스타트 제거** | Lambda 3~10초 콜드 스타트 완전 해소, 일관된 응답 시간 |
 | **예측 가능한 DB 커넥션** | HPA로 Pod 수 제어 → 커넥션 풀 폭발 위험 제거 |
-| **IaC 완전 관리** | Terraform 21개 모듈 + K8s 매니페스트로 전체 인프라 코드화 |
+| **IaC 완전 관리** | Terraform 활성 12개 모듈 + K8s 매니페스트로 전체 인프라 코드화 (레거시 9개는 `_legacy/` 보존) |
 | **보안 계층화** | VPC 격리, NetworkPolicy, OIDC 배포, 동적 SSH SG 관리 |
 | **K8s 네이티브 모니터링** | Prometheus + Grafana + ServiceMonitor 자동 메트릭 수집 |
 | **무중단 배포** | 롤링 업데이트 + 즉시 롤백 (`kubectl rollout undo`) |

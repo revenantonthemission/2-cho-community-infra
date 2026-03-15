@@ -2,6 +2,13 @@
 
 ## 2026-03 (Mar)
 
+- **03-15: 인프라 코드베이스 정리**
+  - `.terraform.lock.hcl`을 `.gitignore`에서 제외 → 환경별 lock 파일 커밋 (provider 버전 고정)
+  - K8s 매니페스트 AWS Account ID 하드코딩 제거: base deployment 이미지를 placeholder로 변경, Kustomize `images` transformer로 환경별 ECR URI 매핑
+  - ECR 토큰 갱신 CronJob: `aws sts get-caller-identity`로 Account ID 동적 조회
+  - Lambda-era 레거시 모듈 9개를 `modules/_legacy/`로 이동 (활성 12개와 분리)
+  - README.md, report.md, CLAUDE.md 문서 동기화
+
 - **03-14: K8s HA 통합 아키텍처 설계 + 코드 구현**
   - `modules/k8s_ec2/` HA 확장: `master_count`(1/3), `worker_count`, `haproxy_enabled` 변수 추가, count 기반 리소스 전환
   - HAProxy L4 로드밸런서: TCP 6443 패스스루, `/healthz` 헬스체크, 전용 SG + userdata 자동 구성

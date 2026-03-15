@@ -2,7 +2,7 @@
 
 커뮤니티 포럼 "아무 말 대잔치"의 AWS 인프라를 Terraform으로 관리하는 저장소입니다.
 
-20개의 재사용 가능한 Terraform 모듈로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다. **kubeadm 기반 K8s 클러스터**로 백엔드/프론트엔드/WebSocket을 컨테이너 운영합니다. Dev는 단일 Master(1M + 2W), Staging/Prod는 HA 구성(3M + 2W + HAProxy)으로 설계되어 있으며, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다.
+12개의 활성 Terraform 모듈 + 9개의 레거시 모듈(`_legacy/`)로 구성되며, 3개 환경(dev/staging/prod) + 1개 부트스트랩 환경을 지원합니다. **kubeadm 기반 K8s 클러스터**로 백엔드/프론트엔드/WebSocket을 컨테이너 운영합니다. Dev는 단일 Master(1M + 2W), Staging/Prod는 HA 구성(3M + 2W + HAProxy)으로 설계되어 있으며, 환경별 리소스 규모를 차등 적용하여 비용을 최적화합니다.
 
 ## 목표 (Goals)
 
@@ -104,7 +104,7 @@ flowchart LR
 
 배포 순서: IAM → VPC → S3 → Route 53 → ACM → SES → ECR → RDS → EC2 → CloudTrail → K8s EC2 → DNS 레코드
 
-### 2. 모듈 설계 (20개)
+### 2. 모듈 설계 (활성 12개 + 레거시 9개)
 
 | # | 모듈 | 설명 | 상태 |
 |---|------|------|------|
@@ -129,13 +129,13 @@ flowchart LR
 | 18 | `api_gateway_websocket` | WebSocket API 라우팅 | 레거시 |
 | 19 | `lambda_websocket` | WebSocket 핸들러 | 레거시 |
 
-> **레거시 모듈**: K8s 마이그레이션 전 서버리스 아키텍처용. 코드는 보존하되 환경에서 사용하지 않음.
+> **레거시 모듈**: K8s 마이그레이션 전 서버리스 아키텍처용. `modules/_legacy/`에 보존하되 환경에서 사용하지 않음.
 
 #### 디렉토리 구조
 
 ```text
 2-cho-community-infra/
-├── modules/                    # 재사용 가능한 Terraform 모듈 (20개)
+├── modules/                    # Terraform 모듈 (활성 12개 + 레거시 9개)
 │   ├── iam/
 │   ├── vpc/
 │   ├── s3/
@@ -148,9 +148,10 @@ flowchart LR
 │   ├── cloudtrail/
 │   ├── k8s_ec2/               # K8s 클러스터
 │   ├── tfstate/
-│   └── (레거시: efs, lambda, api_gateway, cloudwatch,
-│         cloudfront, dynamodb, api_gateway_websocket,
-│         lambda_websocket)
+│   └── _legacy/               # Lambda 아키텍처 레거시 (9개)
+│       ├── efs, lambda, api_gateway, cloudwatch,
+│       └── cloudfront, dynamodb, api_gateway_websocket,
+│           lambda_websocket, eventbridge
 │
 ├── k8s/                        # K8s 매니페스트 (Kustomize base/overlay)
 │   ├── base/                   # 환경 공통 매니페스트
