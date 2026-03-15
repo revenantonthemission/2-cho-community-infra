@@ -188,6 +188,8 @@ module "ec2" {
   project     = var.project
   environment = var.environment
 
+  create_bastion = false
+
   public_subnet_id          = module.vpc.public_subnet_ids[0]
   bastion_security_group_id = module.vpc.bastion_security_group_id
 
@@ -235,7 +237,19 @@ module "k8s_ec2" {
   tags = local.common_tags
 }
 
-# K8s DNS Records (Worker 노드 IP → 도메인)
+# K8s → RDS 접근 허용 (접착 리소스: K8s 모듈 ↔ VPC 모듈 순환 참조 방지)
+resource "aws_vpc_security_group_ingress_rule" "rds_from_k8s" {
+  count = var.create_k8s_cluster ? 1 : 0
+
+  security_group_id            = module.vpc.rds_security_group_id
+  description                  = "MySQL from K8s nodes"
+  ip_protocol                  = "tcp"
+  from_port                    = 3306
+  to_port                      = 3306
+  referenced_security_group_id = module.k8s_ec2[0].k8s_internal_sg_id
+}
+
+# K8s DNS Records (Worker EIP → 도메인)
 resource "aws_route53_record" "k8s" {
   for_each = var.create_k8s_cluster ? toset([
     # 메인 도메인

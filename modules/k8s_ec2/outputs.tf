@@ -16,8 +16,8 @@ output "master_instance_ids" {
 
 # Worker Nodes
 output "worker_public_ips" {
-  description = "Worker 노드 Public IP 목록"
-  value       = aws_instance.worker[*].public_ip
+  description = "Worker 노드 EIP 목록"
+  value       = aws_eip.worker[*].public_ip
 }
 
 output "worker_private_ips" {

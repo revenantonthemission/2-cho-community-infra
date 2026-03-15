@@ -36,9 +36,9 @@ output "nat_gateway_public_ips" {
 }
 
 # ECR
-output "ecr_repository_url" {
-  description = "ECR 레포지토리 URL"
-  value       = module.ecr.repository_url
+output "ecr_repository_urls" {
+  description = "ECR 리포지토리 URL 맵"
+  value       = module.ecr.repository_urls
 }
 
 # RDS

@@ -35,16 +35,10 @@ output "nat_gateway_public_ips" {
   value       = module.vpc.nat_gateway_public_ips
 }
 
-# S3
-output "frontend_bucket_domain" {
-  description = "S3 프론트엔드 버킷 도메인 (레거시 — CloudFront 제거됨)"
-  value       = module.s3.frontend_bucket_regional_domain_name
-}
-
 # ECR
-output "ecr_repository_url" {
-  description = "ECR 레포지토리 URL"
-  value       = module.ecr.repository_url
+output "ecr_repository_urls" {
+  description = "ECR 리포지토리 URL 맵"
+  value       = module.ecr.repository_urls
 }
 
 # RDS
@@ -72,7 +66,7 @@ output "k8s_master_public_ips" {
 }
 
 output "k8s_worker_public_ips" {
-  description = "K8s Worker Public IP 목록"
+  description = "K8s Worker EIP 목록"
   value       = var.create_k8s_cluster ? module.k8s_ec2[0].worker_public_ips : []
 }
 

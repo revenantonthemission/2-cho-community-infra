@@ -1,44 +1,7 @@
 ###############################################################################
 # S3 Module
-# 프론트엔드 정적 웹사이트 호스팅 + CloudTrail 로그 버킷
+# CloudTrail 로그 + 업로드 버킷
 ###############################################################################
-
-# -----------------------------------------------------------------------------
-# Frontend Static Website Bucket
-# -----------------------------------------------------------------------------
-resource "aws_s3_bucket" "frontend" {
-  bucket = "${var.project}-${var.environment}-frontend"
-
-  tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-frontend"
-  })
-}
-
-# S3 Website Hosting 제거 — CloudFront OAC로 접근 제어
-# Clean URL 리라이트는 CloudFront Functions에서 처리
-
-resource "aws_s3_bucket_public_access_block" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# 서버 측 암호화 (비공개 버킷이므로 추가)
-resource "aws_s3_bucket_server_side_encryption_configuration" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-# 버킷 정책은 CloudFront 모듈에서 OAC 기반으로 생성
-# (순환 의존성 방지: S3 → CloudFront → S3 Policy)
 
 # -----------------------------------------------------------------------------
 # CloudTrail Logs Bucket
