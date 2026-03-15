@@ -99,6 +99,18 @@ resource "aws_instance" "worker" {
   })
 }
 
+# Worker Elastic IP
+resource "aws_eip" "worker" {
+  count = var.worker_count
+
+  instance = aws_instance.worker[count.index].id
+  domain   = "vpc"
+
+  tags = merge(var.tags, {
+    Name = "${var.project}-${var.environment}-k8s-worker-${count.index + 1}-eip"
+  })
+}
+
 # =============================================================================
 # HAProxy Load Balancer (HA Master 전용)
 # =============================================================================
