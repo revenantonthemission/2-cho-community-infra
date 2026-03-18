@@ -14,7 +14,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/<GITHUB_ORG>/2-cho-community-infra.git
+    repoURL: https://github.com/80-hours-a-week/2-cho-community-infra.git
     targetRevision: main
     path: k8s/argocd/app-of-apps
 

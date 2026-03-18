@@ -16,9 +16,10 @@ configs:
   cm:
     url: "https://argocd.my-community.shop"
 
-    # GitHub OAuth App SSO (Dex 내장 커넥터)
+    # GitHub OAuth App SSO (Dex 내장 커넥터, 개인 계정용)
     # 사전 설정: GitHub OAuth App 생성 후 argocd-secret에 clientID/clientSecret 저장
     # Authorization callback URL: https://argocd.my-community.shop/api/dex/callback
+    # 개인 계정은 orgs 필터 불가 → RBAC에서 사용자명 직접 매핑
     dex.config: |
       connectors:
         - type: github
@@ -28,8 +29,6 @@ configs:
             clientID: $dex.github.clientID
             clientSecret: $dex.github.clientSecret
             redirectURI: https://argocd.my-community.shop/api/dex/callback
-            orgs:
-              - name: <GITHUB_ORG>
 
     # ecr-cred-refresh CronJob이 동적으로 변경하는 필드 무시
     resource.customizations.ignoreDifferences.all: |

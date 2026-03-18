@@ -11,7 +11,7 @@ spec:
   description: "Camp Linux 개발 환경 — auto-sync 활성화"
 
   sourceRepos:
-    - "https://github.com/<GITHUB_ORG>/2-cho-community-infra.git"
+    - "https://github.com/80-hours-a-week/2-cho-community-infra.git"
 
   # app/data 네임스페이스만 허용 (Helm add-on 네임스페이스 제외)
   destinations:

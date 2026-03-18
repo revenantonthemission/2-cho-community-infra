@@ -11,7 +11,7 @@ spec:
   description: "Camp Linux 프로덕션 환경 — 수동 sync, 배포 윈도우 제한"
 
   sourceRepos:
-    - "https://github.com/<GITHUB_ORG>/2-cho-community-infra.git"
+    - "https://github.com/80-hours-a-week/2-cho-community-infra.git"
 
   destinations:
     - namespace: app

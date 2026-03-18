@@ -1,6 +1,6 @@
-# ArgoCD RBAC 정책 — GitHub SSO 팀 매핑
-# Dex가 GitHub org 팀 멤버십을 "<org>:<team>" 형식으로 전달
-# 개인 repo 구조인 경우: g, <github-username>, role:admin 형식으로 직접 매핑
+# ArgoCD RBAC 정책 — GitHub 사용자명 직접 매핑
+# 개인 계정 구조: org 팀 매핑 대신 사용자명으로 역할 할당
+# Dex GitHub 커넥터가 GitHub username을 subject로 전달
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,11 +9,8 @@ metadata:
 data:
   policy.default: role:readonly
   policy.csv: |
-    # === GitHub org 팀 매핑 ===
-    # <GITHUB_ORG>:<team> 형식으로 교체
-    g, <GITHUB_ORG>:platform-engineers, role:admin
-    g, <GITHUB_ORG>:backend-engineers, role:dev-rw
-    g, <GITHUB_ORG>:frontend-engineers, role:dev-rw
+    # === GitHub 사용자 매핑 ===
+    g, revenantonthemission, role:admin
 
     # === 역할 정의 ===
     # admin: 모든 리소스에 대한 전체 권한
