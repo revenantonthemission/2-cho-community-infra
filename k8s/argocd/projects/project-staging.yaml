@@ -11,6 +11,7 @@ spec:
   description: "Camp Linux 스테이징 환경 — 수동 sync"
 
   sourceRepos:
+    - "https://github.com/80-hours-a-week/2-cho-community-infra.git"
     - "https://github.com/revenantonthemission/2-cho-community-infra.git"
 
   destinations:
@@ -18,12 +19,22 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: data
       server: https://kubernetes.default.svc
+    - namespace: ""
+      server: https://kubernetes.default.svc
 
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
 
-  clusterResourceWhitelist: []
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: ""
+      kind: PersistentVolume
+    - group: storage.k8s.io
+      kind: StorageClass
+    - group: cert-manager.io
+      kind: ClusterIssuer
 
   orphanedResources:
     warn: true

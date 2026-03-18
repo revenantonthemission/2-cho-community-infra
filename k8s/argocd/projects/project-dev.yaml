@@ -11,13 +11,16 @@ spec:
   description: "Camp Linux 개발 환경 — auto-sync 활성화"
 
   sourceRepos:
+    - "https://github.com/80-hours-a-week/2-cho-community-infra.git"
     - "https://github.com/revenantonthemission/2-cho-community-infra.git"
 
-  # app/data 네임스페이스만 허용 (Helm add-on 네임스페이스 제외)
+  # app/data 네임스페이스 + 클러스터 범위 리소스 허용
   destinations:
     - namespace: app
       server: https://kubernetes.default.svc
     - namespace: data
+      server: https://kubernetes.default.svc
+    - namespace: ""
       server: https://kubernetes.default.svc
 
   # 네임스페이스 범위 리소스 전체 허용
@@ -25,8 +28,16 @@ spec:
     - group: "*"
       kind: "*"
 
-  # 클러스터 범위 리소스는 불허 (PV 등은 수동 관리)
-  clusterResourceWhitelist: []
+  # Kustomize overlay가 포함하는 클러스터 범위 리소스 허용
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: ""
+      kind: PersistentVolume
+    - group: storage.k8s.io
+      kind: StorageClass
+    - group: cert-manager.io
+      kind: ClusterIssuer
 
   # 고아 리소스 경고
   orphanedResources:
