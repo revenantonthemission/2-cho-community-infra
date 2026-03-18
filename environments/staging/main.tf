@@ -215,10 +215,9 @@ module "k8s_ec2" {
   # c7i-flex.large는 ap-northeast-2a 미지원 → 2b 서브넷만 전달
   public_subnet_ids = [module.vpc.public_subnet_ids[1]]
 
-  master_count          = 3
-  worker_count          = 2
-  haproxy_enabled       = true
-  haproxy_instance_type = "t3.micro"
+  master_count    = 1
+  worker_count    = 2
+  haproxy_enabled = false
 
   ssh_key_name      = var.k8s_ssh_key_name
   allowed_ssh_cidrs = var.k8s_allowed_ssh_cidrs
@@ -249,6 +248,7 @@ resource "aws_route53_record" "k8s" {
     "api-staging",
     "ws-staging",
     "grafana-staging",
+    "argocd-staging",
   ]) : toset([])
 
   zone_id = module.route53.zone_id
