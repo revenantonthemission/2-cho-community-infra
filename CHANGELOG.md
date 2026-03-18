@@ -2,6 +2,17 @@
 
 ## 2026-03 (Mar)
 
+- **03-18: ArgoCD GitOps 통합**
+  - ArgoCD Helm 설치 (argocd 네임스페이스, Dex GitHub SSO, nginx Ingress)
+  - App-of-Apps 패턴: root-app → 환경별 Application CRD (dev/staging/prod)
+  - 환경별 AppProject: dev(auto-sync), staging(수동, 야간 제한), prod(수동, 평일 오전만)
+  - NetworkPolicy 4개 (argocd-server, dex, repo-server, redis)
+  - RBAC: GitHub 사용자명 직접 매핑 (개인 계정용)
+  - Notifications ConfigMap: GitHub commit status 연동 준비
+  - Route 53에 `argocd.my-community.shop` DNS 레코드 추가
+  - GitHub webhook으로 즉시 동기화 (3분 폴링 → 즉시)
+  - SSH 기반 CD 워크플로우 전면 교체 → infra repo 태그 커밋 방식
+
 - **03-15: 인프라 코드베이스 정리**
   - `.terraform.lock.hcl`을 `.gitignore`에서 제외 → 환경별 lock 파일 커밋 (provider 버전 고정)
   - K8s 매니페스트 AWS Account ID 하드코딩 제거: base deployment 이미지를 placeholder로 변경, Kustomize `images` transformer로 환경별 ECR URI 매핑

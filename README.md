@@ -57,9 +57,14 @@ flowchart TD
             MetricsSrv["metrics-server<br/>HPA 메트릭"]
         end
 
+        subgraph ArgoNS["argocd namespace"]
+            ArgoCD["ArgoCD<br/>App-of-Apps · GitHub SSO<br/>auto-sync (dev)"]
+        end
+
         Ingress --> FE
         Ingress --> API
         Ingress --> WS
+        Ingress -->|"argocd.my-community.shop"| ArgoCD
         API --> MySQL
         API --> Redis
         WS --> Redis
@@ -73,6 +78,16 @@ flowchart TD
         SES["SES<br/>이메일 발송"]
         CT["CloudTrail<br/>감사 로그"]
     end
+
+    subgraph CD["GitOps CD"]
+        GHA["GitHub Actions<br/>Build → ECR Push → Tag Commit"]
+        InfraRepo["Infra Repo<br/>kustomization.yaml<br/>newTag: sha-XXXX"]
+    end
+
+    GHA -->|"docker push"| ECR
+    GHA -->|"kustomize edit set image"| InfraRepo
+    InfraRepo -->|"webhook → auto-sync"| ArgoCD
+    ArgoCD -->|"kubectl apply"| AppNS
 
     API -->|"파일 업로드<br/>STORAGE_BACKEND=s3"| S3
     API -->|"이메일 발송"| SES
