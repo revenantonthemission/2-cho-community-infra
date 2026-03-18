@@ -21,4 +21,4 @@ spec:
             - key: kubernetes.io/hostname
               operator: In
               values:
-                - <STAGING_WORKER_HOSTNAME>
+                - ip-10-1-1-202.ap-northeast-2.compute.internal
