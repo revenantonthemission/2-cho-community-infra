@@ -4,7 +4,7 @@ metadata:
   name: community-config
   namespace: app
 data:
-  DB_HOST: "<PROD_RDS_ENDPOINT>"
+  DB_HOST: "my-community-prod-mysql.c1664goi0e1d.ap-northeast-2.rds.amazonaws.com"
   DB_USER: "admin"
   DB_NAME: "community_service"
   S3_UPLOADS_BUCKET: "my-community-prod-uploads"
