@@ -1,6 +1,6 @@
-# 커뮤니티 서비스 "아무 말 대잔치" — 인프라 아키텍처 및 안정성 설계 보고서
+# 리눅스 커뮤니티 "Camp Linux" — 인프라 아키텍처 및 안정성 설계 보고서
 
-> **작성일**: 2026-03-15
+> **작성일**: 2026-03-18
 > **프로젝트**: AWS AI School 2기 개인 프로젝트
 > **도메인**: my-community.shop
 > **리전**: ap-northeast-2 (서울)
@@ -19,11 +19,11 @@
 
 ## 1. 프로젝트 개요
 
-### 1.1 서비스 소개 및 보고서 목적
+### 1.1 서비스 소개
 
-"아무 말 대잔치"는 수강생 간 학습 경험 공유, 질문/답변, 프로젝트 협업을 위한 커뮤니티 포럼입니다.
+"Camp Linux"는 리눅스 사용자 간 배포판 정보 공유, 질문/답변, 프로젝트 협업을 위한 종합 리눅스 커뮤니티입니다. 게시판, 위키, 패키지 리뷰, 실시간 메시지 등 커뮤니티 핵심 기능을 제공합니다.
 
-본 보고서는 이 서비스의 **인프라 아키텍처 설계, 예상 트래픽 기반 장애 시나리오 분석, 고가용성 구현 방안**을 다룹니다. 단순 기능 설명이 아닌, 실제 서비스 운영을 가정하여 다음 관점에서 작성되었습니다.
+본 보고서는 이 서비스의 **인프라 아키텍처 설계, 예상 트래픽 기반 장애 시나리오 분석, 고가용성 구현 방안**을 다룹니다. 실제 서비스 운영을 가정하여 다음 관점에서 작성되었습니다.
 
 - **가용성**: 서비스 중단 없이 안정적으로 운영할 수 있는가?
 - **확장성**: 사용자 증가에 따라 인프라가 자동으로 대응할 수 있는가?
@@ -34,18 +34,19 @@
 
 | 계층 | 기술 | 선택 근거 | 운영 고려사항 |
 | --- | --- | --- | --- |
-| **프론트엔드** | Vanilla JavaScript (MPA, Vite 빌드) | 프레임워크 없이 JS 기본기 학습 | nginx Pod으로 정적 배포 |
-| **백엔드** | FastAPI (Python 3.11+, aiomysql) | 비동기 I/O, 자동 API 문서화 | K8s Pod에서 Uvicorn 실행, HPA 자동 스케일링 |
-| **데이터베이스** | MySQL 8.0 (RDS + K8s StatefulSet) | FULLTEXT 검색(ngram), 트랜잭션 격리 | RDS 관리형 + K8s 내부 MySQL 이중 구성 |
+| **프론트엔드** | Vanilla JS MPA (Vite, 26개 페이지) | 프레임워크 없이 JS 기본기 학습 | nginx Pod으로 정적 배포 |
+| **백엔드** | FastAPI (Python 3.11+, aiomysql, 103개 API) | 비동기 I/O, 자동 API 문서화 | K8s Pod에서 Uvicorn 실행, HPA 자동 스케일링 |
+| **데이터베이스** | MySQL 8.0 (RDS + K8s StatefulSet, 31개 테이블) | FULLTEXT 검색(ngram), 트랜잭션 격리 | RDS 관리형 + K8s 내부 MySQL 이중 구성 |
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, CronJob 주기적 정리 |
-| **인프라** | AWS (Terraform 활성 12개 + 레거시 9개 모듈) + kubeadm K8s | IaC 재현성, 컨테이너 오케스트레이션 학습 | 3개 환경(Dev/Staging/Prod) 통일 아키텍처 |
-| **CI/CD** | GitHub Actions + OIDC | 장기 자격 증명 없는 배포 | 리포지토리별 독립 워크플로우, 롤링 업데이트 |
+| **인프라** | AWS (Terraform 12개 모듈) + kubeadm K8s | IaC 재현성, 컨테이너 오케스트레이션 학습 | 3개 환경(Dev/Staging/Prod) 통일 아키텍처 |
+| **CI/CD** | GitHub Actions + OIDC + ArgoCD | 장기 자격 증명 없는 배포, GitOps | ArgoCD App-of-Apps, 자동 sync (dev), 수동 sync (staging/prod) |
 | **모니터링** | Prometheus + Grafana (kube-prometheus-stack) | K8s 네이티브 메트릭 수집 | ServiceMonitor 자동 수집, Alertmanager 연동 |
+| **테스트** | pytest-asyncio + Playwright | 백엔드 284개 단위/통합 테스트, 프론트엔드 E2E 테스트 | 테스트 환경 bcrypt 최적화 (rounds 4) |
 | **부하 테스트** | Locust (gevent 기반) | 3종 사용자 시나리오 | 병목 사전 식별, 50~200 동시 사용자 검증 완료 |
 
 ### 1.3 아키텍처 전환 배경
 
-프로젝트 초기에는 서버리스 아키텍처(Lambda + API Gateway + CloudFront)로 운영했습니다. 학습 목적과 운영 안정성 확보를 위해 kubeadm 기반 K8s 클러스터로 전환했습니다.
+프로젝트 초기에는 서버리스 아키텍처(Lambda + API Gateway + CloudFront)로 운영했으나, 학습 목적과 운영 안정성 확보를 위해 kubeadm 기반 K8s 클러스터로 전환했습니다.
 
 | 항목 | 서버리스 (이전) | K8s (현재) |
 | --- | --- | --- |
@@ -56,7 +57,7 @@
 | Rate Limiter | DynamoDB Fixed Window Counter | Redis |
 | 배치 작업 | EventBridge → Lambda 내부 API | K8s CronJob |
 | 모니터링 | CloudWatch 알람 + 대시보드 | Prometheus + Grafana |
-| 배포 | Blue/Green (Lambda Alias) | 롤링 업데이트 (kubectl) |
+| 배포 | Blue/Green (Lambda Alias) | ArgoCD GitOps (자동 sync) |
 | 콜드 스타트 | 3~10초 (VPC ENI + SSM + 앱 초기화) | 없음 (항상 실행 중) |
 | 비용 모델 | 요청당 과금 + Provisioned Concurrency | 고정 EC2 비용 |
 
@@ -71,6 +72,15 @@
 | **인증 토큰 관리** | 토큰 정합성, 브루트포스 방어 | DB 행 잠금, Redis Rate Limiter |
 | **동시 쓰기** (좋아요·북마크·댓글) | 경쟁 상태 방지 | UNIQUE 제약, READ COMMITTED 격리 |
 | **DM 쪽지** (1:1 비공개 메시지) | soft delete, 차단 연동 | WebSocket 실시간 전달 + 폴링 폴백 |
+| **위키** (커뮤니티 지식 베이스) | 슬러그 기반 URL, 태그 필터 | 전용 테이블 + FULLTEXT 검색 |
+| **패키지 리뷰** (1~5점 평점 + 리뷰) | 1인 1리뷰 제약, 평균 평점 집계 | UNIQUE 제약, AVG 집계 쿼리 |
+| **투표** (게시글 내 폴) | 변경/취소 가능, 만료일 관리 | poll/poll_option/poll_vote 3테이블 |
+| **추천 피드** (개인화 정렬) | 사용자 행동 기반 점수 계산 | user_post_score 테이블, CronJob 재계산 |
+| **계정 정지** (관리자 기간 정지) | 인증 체인 차단, 자동 만료 | 3중 체크 (로그인·토큰·API), `suspended_until` 비교 |
+| **마크다운 렌더링** (marked + DOMPurify) | XSS 방지, 번들 크기 관리 | DOMPurify sanitize, 코드 스플릿 |
+| **@멘션 알림** (게시글/댓글) | 닉네임 파싱, 중복 알림 방지 | 정규식 매칭, 수정 시 차집합 알림 |
+| **소셜 로그인** (GitHub OAuth) | OAuth 프로바이더 연동 | social_account 테이블, 팩토리 패턴 |
+| **임시저장** (서버 측 드래프트) | 사용자당 1개 제한, 기기 간 동기화 | post_draft UPSERT, localStorage 폴백 |
 
 ---
 
@@ -113,9 +123,14 @@ flowchart TD
             Metrics["metrics-server<br/>HPA 메트릭"]
         end
 
+        subgraph ArgoNS["argocd namespace"]
+            ArgoCD["ArgoCD<br/>App-of-Apps · GitHub SSO<br/>auto-sync (dev)"]
+        end
+
         Ingress --> FE
         Ingress --> API
         Ingress --> WS
+        Ingress -->|"argocd.my-community.shop"| ArgoCD
         API --> MySQLPod
         API --> RedisPod
         WS --> RedisPod
@@ -135,12 +150,15 @@ flowchart TD
     ECR -.-> K8s
     CronJobs -- "MySQL 백업" --> S3
 
-    subgraph Deploy["CI/CD"]
+    subgraph Deploy["GitOps CD"]
         GHA["GitHub Actions<br/>OIDC 인증"]
+        InfraRepo["Infra Repo<br/>kustomization.yaml<br/>newTag: sha-XXXX"]
     end
 
     GHA -- "Docker Push" --> ECR
-    GHA -- "SSH → kubectl rollout" --> K8s
+    GHA -- "kustomize edit set image" --> InfraRepo
+    InfraRepo -- "webhook → 자동 sync" --> ArgoCD
+    ArgoCD -- "kubectl apply" --> AppNS
 
     style K8s fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style AWS fill:#e3f2fd,stroke:#1565c0
@@ -156,6 +174,7 @@ flowchart TD
 | **API Pod** | FastAPI 앱 실행 (Uvicorn) | HPA로 CPU 70% 기준 2~4개 Pod 자동 스케일링 |
 | **WS Pod** | WebSocket 실시간 알림 | Redis Pub/Sub로 Pod 간 이벤트 브로드캐스트 |
 | **FE Pod** | nginx + Vite 빌드 정적 파일 서빙 | K8s 내부 직접 서빙, CDN 없이 배포 |
+| **ArgoCD** | GitOps CD, App-of-Apps 패턴 | Git을 단일 진실 공급원으로 사용, SSH 접근 불필요 |
 | **MySQL (StatefulSet)** | K8s 내부 MySQL (데이터 계층) | 개발 환경 빠른 접근, RDS와 별도 운영 |
 | **Redis** | Rate Limiter, WebSocket Pub/Sub | 인메모리 저장소, DynamoDB 대체 |
 | **RDS** | AWS 관리형 MySQL (프라이빗 서브넷) | 자동 백업, Multi-AZ(Prod), 관리 부담 최소화 |
@@ -175,7 +194,6 @@ flowchart TD
         subgraph AZ_A["ap-northeast-2a"]
             subgraph PubA["Public Subnet · 10.x.0.0/24"]
                 NAT_A["NAT Gateway"]
-                Bastion["Bastion Host<br/>(Dev만)"]
             end
             subgraph PrivA["Private Subnet · 10.x.100.0/24"]
                 RDS_Primary["RDS Primary"]
@@ -197,7 +215,6 @@ flowchart TD
     Internet <--> IGW
     IGW <--> PubA
     IGW <-->|"HTTP/HTTPS 트래픽"| PubB
-    Bastion -->|"SSH 터널"| RDS_Primary
     K8sWorker -->|"TCP 3306"| RDS_Primary
     RDS_Primary -. "동기 복제<br/>(Prod)" .-> RDS_Standby
 
@@ -218,7 +235,6 @@ flowchart LR
     Admin["관리자"] -->|"TCP 22 (SSH)"| SSH_SG["k8s-ssh SG<br/>(허용 CIDR만)"]
 
     Worker_SG["k8s-worker SG"] -->|"TCP 3306"| RDS_SG["rds SG"]
-    Bastion_SG["bastion SG<br/>(SSH: 허용 CIDR만)"] -->|"TCP 3306"| RDS_SG
 
     Master_SG["k8s-master SG"] <-->|"전 포트<br/>(Calico Pod 네트워크)"| Internal_SG["k8s-internal SG<br/>(자기 참조)"]
     Worker_SG <-->|"전 포트"| Internal_SG
@@ -228,20 +244,18 @@ flowchart LR
 
 - K8s 노드는 퍼블릭 서브넷에 배치 — Ingress Controller(hostNetwork)가 인터넷 트래픽을 직접 수신합니다.
 - K8s Internal SG는 자기 참조(self-referencing)로 노드 간 전 포트 통신을 허용합니다 (Calico CNI 직접 라우팅에 필수).
-- RDS는 프라이빗 서브넷에 격리되어 K8s Worker SG와 Bastion SG에서만 접근 가능합니다.
+- RDS는 프라이빗 서브넷에 격리되어 K8s Worker SG에서만 접근 가능합니다.
 - SSH SG는 `k8s_allowed_ssh_cidrs`가 제공된 경우에만 조건부 생성됩니다.
 
 #### 환경별 VPC 설정
 
-| 환경 | VPC CIDR | NAT Gateway | K8s 토폴로지 | EC2 합계 | Bastion |
+| 환경 | VPC CIDR | NAT Gateway | K8s 토폴로지 | EC2 합계 | 배포 상태 |
 | --- | --- | --- | --- | --- | --- |
-| Dev | `10.0.0.0/16` | 1개 | 1M + 2W | 3대 | 활성화 |
-| Staging | `10.1.0.0/16` | 1개 | **3M + 2W + HAProxy** (HA) | 6대 | 비활성화 |
-| Prod | `10.2.0.0/16` | AZ당 1개 | **3M + 2W + HAProxy** (HA) | 6대 | 비활성화 |
+| Dev | `10.0.0.0/16` | 1개 | 1M + 2W | 3대 | **운영 중** |
+| Staging | `10.1.0.0/16` | 1개 | **3M + 2W + HAProxy** (HA) | 6대 | **배포 준비 중** |
+| Prod | `10.2.0.0/16` | AZ당 1개 | **3M + 2W + HAProxy** (HA) | 6대 | 코드 완료 |
 
-### 2.3 서비스 간 통신 흐름
-
-#### 인증 흐름 (JWT)
+### 2.3 인증 흐름 (JWT)
 
 ```mermaid
 sequenceDiagram
@@ -288,14 +302,14 @@ sequenceDiagram
 - DB 행 잠금(`SELECT ... FOR UPDATE`)으로 동시 토큰 재사용 공격을 방지합니다.
 - 타이밍 공격 방지: 존재하지 않는 이메일로 로그인 시에도 동일한 bcrypt 검증을 수행합니다.
 
-#### CI/CD 배포 흐름
+### 2.4 CI/CD 배포 흐름 (ArgoCD GitOps)
 
 ```mermaid
 flowchart LR
     subgraph GitHub["GitHub (3개 리포지토리)"]
         BE["BE 리포<br/>deploy-k8s.yml"]
         FE["FE 리포<br/>deploy-k8s.yml"]
-        Infra["Infra 리포<br/>deploy-infra.yml"]
+        Infra["Infra 리포<br/>kustomization.yaml"]
     end
 
     subgraph Auth["인증"]
@@ -303,36 +317,35 @@ flowchart LR
         STS["AWS STS<br/>(임시 자격 증명)"]
     end
 
-    subgraph K8s_Deploy["K8s 배포 (롤링 업데이트)"]
+    subgraph Build["이미지 빌드"]
         Docker["Docker Build<br/>(--platform linux/amd64)"]
         ECR_Push["ECR Push<br/>(sha-commit + latest)"]
-        SG_Open["SSH SG 규칙 추가<br/>(GitHub Actions IP)"]
-        SSH["SSH → Master 노드<br/>kubectl rollout restart"]
-        Health["Health Check<br/>(HTTPS → /health)"]
-        SG_Close["SSH SG 규칙 제거"]
     end
 
-    BE -->|"api/ws 컴포넌트"| OIDC
-    FE -->|"프론트엔드"| OIDC
+    subgraph GitOps["GitOps 배포"]
+        TagCommit["kustomize edit set image<br/>newTag: sha-XXXX"]
+        Webhook["GitHub Webhook<br/>→ ArgoCD"]
+        ArgoCDDeploy["ArgoCD<br/>자동 sync (dev)<br/>수동 sync (staging/prod)"]
+    end
+
+    BE --> OIDC
+    FE --> OIDC
     OIDC --> STS
     STS --> Docker
     Docker --> ECR_Push
-    ECR_Push --> SG_Open
-    SG_Open --> SSH
-    SSH --> Health
-    Health --> SG_Close
+    ECR_Push --> TagCommit
+    TagCommit -->|"git push → Infra 리포"| Webhook
+    Webhook --> ArgoCDDeploy
 
-    Infra -->|"terraform plan/apply"| STS
-
-    style K8s_Deploy fill:#e8f5e9,stroke:#2e7d32
+    style GitOps fill:#e8f5e9,stroke:#2e7d32
 ```
 
 **설계 근거**:
 
 - **OIDC 인증**: 장기 자격 증명(AWS Access Key) 없이 임시 토큰으로 AWS 인증. 자격 증명 유출 위험을 제거합니다.
-- **동적 SSH SG 관리**: 배포 시에만 GitHub Actions Runner IP를 SSH SG에 추가하고, 완료 후 즉시 제거합니다.
-- **롤링 업데이트**: `kubectl rollout restart`로 무중단 배포. 새 Pod가 Ready 후 기존 Pod를 종료합니다.
-- **리포지토리별 독립 워크플로우**: BE(api/ws), FE(프론트엔드), Infra(Terraform)를 분리하여 배포 범위를 제한합니다.
+- **GitOps (ArgoCD)**: Git을 단일 진실 공급원(Single Source of Truth)으로 사용. SSH 접근 불필요, SG 동적 조작 제거, 배포 이력이 Git 커밋으로 자동 기록됩니다.
+- **App-of-Apps 패턴**: root-app이 환경별 Application CRD를 관리. dev는 자동 sync, staging/prod는 수동 sync + 배포 윈도우 제한.
+- **리포지토리별 독립 워크플로우**: BE, FE가 각각 이미지 빌드 후 infra repo에 태그 커밋. ArgoCD가 변경 감지 후 자동 반영.
 
 ---
 
@@ -550,9 +563,7 @@ flowchart TD
 
 ## 4. 고가용성 구현 방안
 
-### 4.1 현재 구현 상태 (As-Is)
-
-#### 환경별 HA 설정 비교
+### 4.1 환경별 HA 구현 현황
 
 | 항목 | Dev | Staging | Prod |
 | --- | --- | --- | --- |
@@ -569,6 +580,7 @@ flowchart TD
 | **HPA** | CPU 70% 기준 | CPU 70% 기준 | CPU 70% 기준 |
 | **S3 내구성** | 99.999999999% | 99.999999999% | 99.999999999% |
 | **모니터링** | Prometheus + Grafana | Prometheus + Grafana | Prometheus + Grafana |
+| **ArgoCD sync** | 자동 | **수동** | **수동** |
 | **CloudTrail 보존** | 30일 | 60일 | **90일** |
 | **ECR 이미지 보존** | 3개 | 10개 | **20개** |
 
@@ -581,8 +593,8 @@ flowchart TD
 5. **S3 99.999999999% 내구성**: 업로드 파일·백업 영구 보존
 6. **Prometheus 모니터링**: ServiceMonitor 자동 메트릭 수집 + Grafana 시각화
 7. **Terraform State 보호**: S3 버전 관리 + DynamoDB 동시 수정 잠금
-8. **롤링 업데이트**: 새 Pod Ready → 기존 Pod 종료 (무중단 배포)
-9. **HA 컨트롤 플레인 설계 완료** (Staging/Prod): Master 3대 + HAProxy L4 LB. Terraform `master_count`/`haproxy_enabled` 변수로 환경별 전환. Kustomize overlay로 환경 분기. Free Tier 제약으로 배포 보류 중
+8. **ArgoCD GitOps 배포**: Git revert로 즉시 롤백 + 롤링 업데이트 (무중단)
+9. **HA 컨트롤 플레인** (Staging/Prod): Master 3대 + HAProxy L4 LB. Staging 배포 준비 중
 
 #### 서버리스 대비 K8s의 HA 변화
 
@@ -597,7 +609,7 @@ flowchart TD
 
 ### 4.2 가용 영역 분산 전략
 
-#### 현재 상태 (Dev — 배포 완료)
+#### 현재 상태 (Dev — 운영 중)
 
 ```mermaid
 flowchart LR
@@ -612,8 +624,6 @@ flowchart LR
     subgraph AZ_A["ap-northeast-2a"]
         direction TB
         RDS_A["RDS Primary"]
-        Bastion["Bastion"]
-        RDS_A ~~~ Bastion
     end
 
     style AZ_B fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
@@ -622,7 +632,7 @@ flowchart LR
 
 **약점**: K8s 노드 전체가 단일 AZ에 배치 — AZ 장애 시 전면 중단.
 
-#### 설계 완료 (Staging/Prod HA — 배포 보류)
+#### Staging/Prod HA 클러스터 (배포 준비 중)
 
 ```mermaid
 flowchart LR
@@ -647,8 +657,6 @@ flowchart LR
     style AZ_A fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
 ```
 
-> **배포 보류 사유**: AWS Free Tier EIP 한도(리전당 5개) 초과. HA 클러스터에 EIP 4개 추가 필요 → 계정 업그레이드 또는 Service Quotas 상향 후 배포 가능.
-
 #### 개선안: 멀티 AZ K8s 배치
 
 | 항목 | 현재 (단일 AZ) | 개선 (멀티 AZ) | 비고 |
@@ -659,7 +667,7 @@ flowchart LR
 
 **제약**: `c7i-flex.large`가 `ap-northeast-2a` 미지원. `c6i.large` 등으로 변경 필요.
 
-### 4.3 Auto Scaling 및 Load Balancer 활용 방안
+### 4.3 Auto Scaling + Load Balancer
 
 #### 4.3.1 현재 Auto Scaling (HPA)
 
@@ -680,8 +688,6 @@ flowchart LR
 **현재 한계**: HPA는 Pod 수만 조절하며, 노드 수는 고정(2대)입니다. Pod max 4에 도달하거나 노드 리소스가 소진되면 더 이상 스케일링할 수 없습니다.
 
 #### 4.3.2 개선안: Cluster Autoscaler
-
-Cluster Autoscaler를 도입하면 Pod Pending 상태를 감지하여 자동으로 Worker 노드를 추가합니다.
 
 ```mermaid
 flowchart LR
@@ -715,11 +721,6 @@ flowchart LR
 **개선안 (Stage 2 이상)**: AWS NLB를 도입하면 멀티 AZ 트래픽 분산과 헬스 체크 기반 자동 장애 감지가 가능합니다.
 
 #### 4.3.4 RDS Read Replica + 읽기 분리
-
-| 작업 유형 | 비율 (추정) | 대상 |
-| --- | --- | --- |
-| 읽기 (GET) | ~80% | 게시글 목록, 상세, 댓글, 알림 |
-| 쓰기 (POST/PUT/DELETE) | ~20% | 게시글 작성, 댓글, 좋아요, 북마크 |
 
 ```mermaid
 flowchart LR
@@ -832,20 +833,18 @@ flowchart LR
 - **RPO**: ~0 (동기 복제)
 - **애플리케이션 영향**: 전환 중 DB 커넥션 에러 → aiomysql 풀이 자동 재연결
 
-##### K8s 배포 롤백
+##### K8s 배포 롤백 (ArgoCD)
 
 ```bash
-# 이전 버전으로 즉시 롤백
+# ArgoCD를 통한 롤백: infra repo의 이전 커밋으로 revert
+git revert HEAD  # 태그 커밋 되돌리기
+git push origin main  # ArgoCD가 자동 감지 → 이전 이미지로 sync
+
+# 긴급 수동 롤백 (ArgoCD 우회)
 kubectl -n app rollout undo deployment/community-api
-
-# 특정 리비전으로 롤백
-kubectl -n app rollout undo deployment/community-api --to-revision=3
-
-# 롤아웃 상태 확인
-kubectl -n app rollout status deployment/community-api
 ```
 
-- **RTO**: ~30초 (Pod 재생성)
+- **RTO**: ~30초 (Pod 재생성) — ArgoCD 경유 시 webhook 포함 ~1분
 - **RPO**: 0 (Stateless)
 
 ##### K8s MySQL 복원
@@ -881,7 +880,7 @@ flowchart TD
     end
 
     subgraph Response["3. 대응"]
-        Rollback["배포 롤백<br/>kubectl rollout undo"]
+        Rollback["배포 롤백<br/>git revert + ArgoCD sync"]
         Scale_Node["Worker 노드 추가"]
         Scale_Pod["HPA 상한 조정"]
         RDS_Scale["RDS 인스턴스 스케일 업"]
@@ -917,10 +916,10 @@ flowchart TD
 | **통일 아키텍처** | 모든 환경이 동일 K8s 기반 + Kustomize overlay — "works in dev" = "works in prod" |
 | **콜드 스타트 제거** | Lambda 3~10초 콜드 스타트 완전 해소, 일관된 응답 시간 |
 | **예측 가능한 DB 커넥션** | HPA로 Pod 수 제어 → 커넥션 풀 폭발 위험 제거 |
-| **IaC 완전 관리** | Terraform 활성 12개 모듈 + K8s 매니페스트로 전체 인프라 코드화 (레거시 9개는 `_legacy/` 보존) |
-| **보안 계층화** | VPC 격리, NetworkPolicy, OIDC 배포, 동적 SSH SG 관리 |
+| **IaC 완전 관리** | Terraform 12개 모듈 + K8s 매니페스트로 전체 인프라 코드화 |
+| **GitOps CD** | ArgoCD App-of-Apps 패턴으로 Git 기반 배포. SSH 불필요, 배포 이력 자동 기록 |
+| **보안 계층화** | VPC 격리, NetworkPolicy, OIDC 배포, GitHub SSO |
 | **K8s 네이티브 모니터링** | Prometheus + Grafana + ServiceMonitor 자동 메트릭 수집 |
-| **무중단 배포** | 롤링 업데이트 + 즉시 롤백 (`kubectl rollout undo`) |
 
 ### 5.2 현재 아키텍처의 약점과 위험도
 
@@ -949,7 +948,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | **EBS CSI Driver** | hostPath → EBS PVC | 노드 장애 시 데이터 보존 | EBS 용량만 |
 | **멀티 AZ 노드** | 인스턴스 타입 변경 (c6i.large) | AZ 장애 내성 확보 | 0 (같은 수) |
-| **HA 배포** | Staging/Prod 코드 활성화 | 컨트롤 플레인 이중화 | EIP 비용 |
+| **Staging 배포** | Terraform apply + K8s 부트스트랩 | 프로덕션 전 검증 환경 확보 | EIP + EC2 비용 |
 
 #### 중기 — Stage 2 (DAU 3,000, 월 ~$100 추가)
 
@@ -971,4 +970,4 @@ flowchart TD
 
 ---
 
-> **요약**: kubeadm K8s 전환으로 콜드 스타트 제거, DB 커넥션 안정화, 통일된 배포 파이프라인을 확보했습니다. Staging/Prod HA 아키텍처(Master 3대 + HAProxy)는 코드 완료 상태이며, Free Tier 제약 해소 후 즉시 배포 가능합니다. 현재 **가장 시급한 개선 과제는 etcd 백업, Alertmanager 설정, EBS CSI Driver 도입**이며, 모두 비용 0으로 달성 가능합니다. 성장 단계에 따라 HA 배포 → 멀티 AZ → Read Replica → EKS 순서로 점진적 확장이 가능합니다.
+> **요약**: kubeadm K8s 전환으로 콜드 스타트 제거, DB 커넥션 안정화, ArgoCD GitOps 기반 무중단 배포 파이프라인을 확보했습니다. Staging HA 환경(Master 3대 + HAProxy) 배포를 준비 중이며, 현재 **가장 시급한 개선 과제는 etcd 백업, Alertmanager 설정, EBS CSI Driver 도입**입니다. 성장 단계에 따라 Staging 배포 → 멀티 AZ → Read Replica → EKS 순서로 점진적 확장이 가능합니다.
