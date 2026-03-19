@@ -11,6 +11,8 @@ on:
     paths:
       - 'k8s/**'
 
+permissions: {}
+
 jobs:
   kustomize:
     name: Kustomize Build
