@@ -41,7 +41,7 @@ flowchart TD
 
     NLB --> Ingress
 
-    subgraph EKS["EKS Cluster (Prod · Managed Node Group · t3.medium × 2~4)"]
+    subgraph EKS["EKS Cluster (Prod · Managed Node Group · t3.medium × 2~4 · Cluster Autoscaler)"]
         Ingress["Ingress-NGINX<br/>LoadBalancer Service<br/>cert-manager (Let's Encrypt)"]
 
         subgraph AppNS["app namespace"]
@@ -57,7 +57,7 @@ flowchart TD
         end
 
         subgraph MonNS["monitoring namespace"]
-            Prometheus["Prometheus + Grafana<br/>kube-prometheus-stack"]
+            Prometheus["Prometheus + Grafana<br/>+ Alertmanager → Slack<br/>kube-prometheus-stack"]
             MetricsSrv["metrics-server<br/>HPA 메트릭"]
         end
 
@@ -199,6 +199,7 @@ flowchart LR
 │   └── helm-values/            # Helm 차트 설정 (환경별)
 │       ├── cert-manager.yaml, ingress-nginx.yaml
 │       ├── mysql.yaml, redis.yaml, metrics-server.yaml
+│       ├── cluster-autoscaler.yaml
 │       └── kube-prometheus-stack-{dev,staging,prod}.yaml
 │
 ├── environments/               # 환경별 설정
@@ -306,6 +307,7 @@ flowchart TD
 | Ingress | nginx (hostNetwork DaemonSet) | nginx | **Ingress-NGINX (LoadBalancer)** |
 | 인증서 | cert-manager + Let's Encrypt | cert-manager | cert-manager + Let's Encrypt |
 | 모니터링 | Prometheus + Grafana | Prometheus + Grafana | Prometheus + Grafana |
+| Cluster Autoscaler | 없음 | 없음 | **활성 (min 2, max 4)** |
 
 #### K8s 워크로드
 
@@ -329,6 +331,13 @@ flowchart TD
 - 3개 PDB로 롤링 업데이트 시 최소 1개 Pod 가용 보장
 - ASG min 2, max 4 노드
 
+#### Cluster Autoscaler (Prod)
+
+- **설치**: `autoscaler/cluster-autoscaler` Helm 차트 (v1.31.0, EKS 버전 매칭)
+- **IRSA**: Terraform EKS 모듈에서 `cluster-autoscaler` ServiceAccount에 IAM Role 자동 바인딩
+- **동작**: Pod Pending 감지 → ASG DesiredCapacity 자동 조정 (min 2, max 4)
+- **스케일 다운**: 10분 유휴 후 불필요 노드 자동 제거
+
 #### RDS (데이터베이스)
 
 | 설정 | Dev | Staging | Prod |
@@ -346,6 +355,7 @@ flowchart TD
 
 - Prod: IRSA (IAM Roles for Service Accounts)로 S3 접근. `UPLOAD_DIR=""` (로컬 스토리지 없음)
 - Dev/Staging: K8s 노드 IAM 역할에 S3 업로드 권한 자동 부여
+- S3 uploads 버킷에 버전 관리(versioning) 활성화 — 실수 삭제 시 이전 버전에서 복구 가능
 
 #### ECR (컨테이너 이미지)
 
@@ -393,6 +403,7 @@ flowchart TD
 - **관리자 사용자**: `terraform.tfvars`의 `admin_username`으로 생성
 - **관리자 그룹**: `AdministratorAccess` 정책 연결
 - **EKS IRSA**: S3 업로드용 ServiceAccount에 IAM 역할 바인딩 (Prod)
+- **Cluster Autoscaler IRSA**: `cluster-autoscaler` ServiceAccount에 ASG 조정 권한 바인딩
 - **K8s 노드 역할**: ECR Pull + S3 업로드 권한 (Dev/Staging)
 - **부트스트랩 순서**: 최초 `terraform apply`는 루트 자격 증명 필수
 
@@ -424,6 +435,9 @@ S3 + DynamoDB 원격 백엔드를 사용합니다. 단일 S3 버킷(`my-communit
 - **설치**: kube-prometheus-stack Helm 차트
 - **metrics-server**: HPA 자동 스케일링 메트릭
 - **ServiceMonitor**: FastAPI 앱의 Prometheus 메트릭 자동 수집
+- **Alertmanager**: Slack webhook 연동으로 알림 전송
+  - 알림 규칙: PodCrashLooping, PodPending, NodeCPUHigh, NodeMemoryHigh, APIHighErrorRate
+  - Slack webhook URL은 K8s Secret(`slack-webhook`)으로 관리
 
 #### CloudTrail (AWS)
 
@@ -554,7 +568,7 @@ kubectl run mysql-client --rm -it --image=mariadb:lts --restart=Never -n app -- 
 | RDS Multi-AZ | No | No | **Yes** |
 | RDS 백업 보존 | 1일 | 1일 | **14일** |
 | ECR 이미지 보존 | 3개 | 10개 | 20개 |
-| 고가용성 | 없음 | Control Plane HA | **PDB + TopologySpread + AntiAffinity + ASG** |
+| 고가용성 | 없음 | Control Plane HA | **PDB + TopologySpread + AntiAffinity + Cluster Autoscaler + Alertmanager** |
 | 모니터링 | Prometheus + Grafana | Prometheus + Grafana | Prometheus + Grafana |
 | Kustomize overlay | `overlays/dev/` | `overlays/staging/` | `overlays/prod/` |
 | 삭제 보호 (RDS) | No | No | **Yes** |

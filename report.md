@@ -40,8 +40,8 @@
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, CronJob 주기적 정리 |
 | **인프라** | AWS (Terraform 12개 모듈) + EKS (Prod) / kubeadm (Dev) | IaC 재현성, 관리형 컨트롤 플레인 (Prod) | Prod: EKS Managed Node Group, Dev: kubeadm 1M+2W |
 | **CI/CD** | GitHub Actions + OIDC + ArgoCD | 장기 자격 증명 없는 배포, GitOps | ArgoCD App-of-Apps, 자동 sync (dev), 수동 sync (prod) |
-| **모니터링** | Prometheus + Grafana (kube-prometheus-stack) | K8s 네이티브 메트릭 수집 | ServiceMonitor 자동 수집, Alertmanager 미설정 (개선 필요) |
-| **파일 스토리지** | S3 (STORAGE_BACKEND=s3) | 99.999999999% 내구성, AZ 비종속 | PVC 제거로 Pod AZ 분산 제약 해소 |
+| **모니터링** | Prometheus + Grafana + Alertmanager (kube-prometheus-stack) | K8s 네이티브 메트릭 수집 | ServiceMonitor 자동 수집, Alertmanager → Slack 알림 활성화 |
+| **파일 스토리지** | S3 (STORAGE_BACKEND=s3) | 99.999999999% 내구성, AZ 비종속 | PVC 제거로 Pod AZ 분산 제약 해소, 버전 관리 활성화 |
 
 ### 1.3 아키텍처 전환 이력
 
@@ -131,6 +131,7 @@ flowchart TD
 
         subgraph MonNS["monitoring namespace"]
             Prom["Prometheus + Grafana<br/>kube-prometheus-stack"]
+            AlertMgr["Alertmanager<br/>→ Slack #infra-alerts"]
             Metrics["metrics-server<br/>HPA 메트릭"]
         end
 
@@ -184,12 +185,12 @@ flowchart TD
 | **NLB** | L4 로드밸런싱, AZ 간 트래픽 분산 | kubeadm의 hostNetwork DaemonSet 대비 노드 IP 비노출, AWS 관리형 HA |
 | **Ingress-NGINX** | HTTPS 종단, 경로 기반 라우팅 | cert-manager + Let's Encrypt로 TLS 자동 갱신, NLB 뒤에서 L7 처리 |
 | **EKS 컨트롤 플레인** | K8s API 서버, etcd, 스케줄러 | AWS 관리형이므로 etcd 백업·업그레이드·패치 자동 처리 (kubeadm 대비 운영 부담 제거) |
-| **Managed Node Group** | Worker 노드 생명주기 관리 | ASG 연동, 롤링 업데이트 지원, 프라이빗 서브넷 배치로 보안 강화 |
+| **Managed Node Group** | Worker 노드 생명주기 관리 | ASG 연동 + Cluster Autoscaler 자동 확장 (min 2 / max 4), 롤링 업데이트 지원, 프라이빗 서브넷 배치로 보안 강화 |
 | **API Pod (HPA)** | FastAPI 앱, CPU 70% 기준 2~4개 자동 조절 | Topology Spread로 AZ 간 균등 배치, PDB로 유지보수 시 최소 가용성 보장 |
 | **WS Pod** | WebSocket 실시간 알림 | Redis Pub/Sub로 Pod 간 이벤트 브로드캐스트, 2 replica로 단일 장애점 제거 |
 | **FE Pod** | nginx 정적 파일 서빙 | 2 replica AZ 분산, CDN 없이 직접 서빙 (현재 규모에 적합) |
 | **RDS Multi-AZ** | AWS 관리형 MySQL | 동기 복제로 RPO ~0, 자동 페일오버 60~120초, 14일 백업, 삭제 보호 |
-| **S3** | 파일 업로드 (PVC 대체) | 99.999999999% 내구성, AZ 비종속으로 Pod 스케줄링 제약 없음 |
+| **S3** | 파일 업로드 (PVC 대체) | 99.999999999% 내구성, AZ 비종속으로 Pod 스케줄링 제약 없음, 버전 관리 활성화로 실수 삭제 복구 가능 |
 | **ArgoCD** | GitOps CD, App-of-Apps 패턴 | Git을 단일 진실 공급원으로 사용, SSH 접근 불필요 |
 
 ### 2.2 네트워크 토폴로지 (Prod)
@@ -422,9 +423,9 @@ flowchart LR
 | --- | --- | --- |
 | Worker 노드 | t3.medium × 2 (2 vCPU, 4 GB 각) | 총 4 vCPU, 8 GB |
 | API Pod (HPA) | min 2 → max 4 (CPU 250m~500m) | 4 Pod × 500m = 2 vCPU (이론적 한도) |
-| ASG 설정 | min 2, max 4 | **Cluster Autoscaler 미설치** |
+| ASG 설정 | min 2, max 4 | **Cluster Autoscaler 설치 완료** |
 
-**핵심 문제**: EKS ASG가 max 4로 설정되어 있지만 Cluster Autoscaler가 설치되지 않았습니다. HPA가 Pod를 4개까지 늘려도 노드 리소스가 부족하면 Pod가 Pending 상태에 머물며, 이때 자동으로 노드가 추가되지 않습니다.
+**자동 노드 확장**: Cluster Autoscaler가 설치되어 HPA가 Pod를 확장할 때 노드 리소스가 부족하면 ASG를 통해 자동으로 노드를 추가합니다. IRSA(IAM Roles for Service Accounts)로 IAM 권한을 관리하며, ASG autodiscovery로 노드 그룹을 자동 감지합니다. 스케일 다운 쿨다운은 10분으로 설정되어 불필요한 노드 진동을 방지합니다.
 
 ```mermaid
 flowchart TD
@@ -433,13 +434,12 @@ flowchart TD
     Traffic -->|"CPU 사용률 > 70%"| HPA["HPA 감지<br/>Pod 수 증가 (2→4)"]
     HPA -->|"노드 여유 있음"| Scale["Pod 스케일 아웃<br/>요청 AZ 간 분산"]
     HPA -->|"노드 리소스 부족"| Pending["Pod Pending<br/>스케줄링 불가"]
-    Pending -->|"Cluster Autoscaler 미설치"| Manual["수동 ASG 조정 필요<br/>→ 대응 지연"]
-    Manual --> Degraded["기존 Pod에 과부하<br/>응답 지연"]
+    Pending -->|"Cluster Autoscaler 감지"| CA_Scale["ASG 노드 자동 추가<br/>(max 4, ~3분 소요)"]
+    CA_Scale --> Scale
 
     style Scale fill:#e8f5e9,stroke:#2e7d32
     style Pending fill:#fce4ec,stroke:#c62828
-    style Manual fill:#ef5350,color:#fff,stroke:#b71c1c
-    style Degraded fill:#b71c1c,color:#fff,stroke:#7f0000
+    style CA_Scale fill:#66bb6a,color:#fff,stroke:#2e7d32
 ```
 
 #### 3.2.2 RDS 단일 인스턴스 병목
@@ -520,7 +520,7 @@ flowchart TD
     Node_Fail -->|"수 분 후"| Reschedule["K8s가 장애 노드의<br/>Pod를 남은 노드에 재배치"]
     Reschedule -->|"2 replica 복구"| Full_Recovery["완전 복구<br/>(AZ 편중 상태)"]
 
-    Node_Fail -->|"ASG 감지"| ASG["EKS ASG<br/>새 노드 프로비저닝<br/>(수 분 소요)"]
+    Node_Fail -->|"Cluster Autoscaler 감지"| ASG["Cluster Autoscaler<br/>→ ASG 노드 자동 추가<br/>(~3분 소요)"]
     ASG --> Rebalance["Pod 리밸런싱<br/>AZ 분산 복구"]
 
     style Node_Fail fill:#ef5350,color:#fff,stroke:#b71c1c
@@ -536,7 +536,7 @@ flowchart TD
 | **RTO** | 2~5분 (Pod 재스케줄링 대기) | **0초** (다른 AZ Pod 즉시 처리) |
 | **RPO** | 0 (Stateless) | 0 (Stateless) |
 | **서비스 영향** | 전면 중단 | 성능 저하만 (50% 용량) |
-| **복구 방식** | K8s 재스케줄링 | 즉시 서비스 + ASG 노드 복구 |
+| **복구 방식** | K8s 재스케줄링 | 즉시 서비스 + Cluster Autoscaler 노드 자동 복구 |
 
 #### 시나리오 3: AZ 장애 (ap-northeast-2a 전체)
 
@@ -580,28 +580,29 @@ flowchart TD
 
     Viral -->|"1단계"| HPA_Scale["HPA 감지<br/>API Pod 2→4 증가"]
     HPA_Scale -->|"노드 자원 소진"| Pod_Pending["추가 Pod Pending"]
-    Pod_Pending -->|"CA 미설치"| Manual_Intervention["수동 ASG 조정 필요"]
+    Pod_Pending -->|"Cluster Autoscaler"| CA_Scale["ASG 노드 자동 추가<br/>(max 4, ~3분)"]
+    CA_Scale --> Scale_OK["Pod 스케줄링 성공<br/>서비스 정상 유지"]
 
     Viral -->|"2단계"| DB_Pressure["RDS CPU 급증<br/>FULLTEXT + 대량 SELECT"]
     DB_Pressure --> Slow_Query["쿼리 응답 지연"]
 
     Viral -->|"3단계"| Redis_Pressure["Redis 메모리 증가<br/>Rate Limit 키 폭발"]
 
-    Manual_Intervention --> Cascade["대응 지연 → 연쇄 장애"]
-    Slow_Query --> Cascade
-    Cascade --> User_Impact["사용자 경험 저하"]
+    Slow_Query --> Degraded["DB 병목 → 응답 지연"]
+    Degraded --> User_Impact["사용자 경험 저하"]
 
     style Viral fill:#ff9800,color:#fff,stroke:#e65100,stroke-width:2px
     style Pod_Pending fill:#fce4ec,stroke:#c62828
-    style Manual_Intervention fill:#ef5350,color:#fff,stroke:#b71c1c
+    style CA_Scale fill:#66bb6a,color:#fff,stroke:#2e7d32
+    style Scale_OK fill:#e8f5e9,stroke:#2e7d32
     style Slow_Query fill:#fce4ec,stroke:#c62828
-    style Cascade fill:#ef5350,color:#fff,stroke:#b71c1c
+    style Degraded fill:#ef5350,color:#fff,stroke:#b71c1c
     style User_Impact fill:#b71c1c,color:#fff,stroke:#7f0000
 ```
 
 | 병목 지점 | 현재 한도 | 포화 시점 | 완화 방안 |
 | --- | --- | --- | --- |
-| Worker 노드 CPU | 4 vCPU (2대) | Stage 2 (~500 동시) | **Cluster Autoscaler 설치** (ASG max 4 활용) |
+| Worker 노드 CPU | 4 vCPU (2대, CA로 max 4대 자동 확장) | Stage 2 (~500 동시) | Cluster Autoscaler 설치 완료 (ASG max 4 자동 활용) |
 | RDS CPU | 2 vCPU (t3.medium) | Stage 2 | Read Replica 도입 |
 | RDS 커넥션 | ~120 (t3.medium) | Stage 2 (Pod 증가 시) | 인스턴스 스케일 업 |
 | Redis 메모리 | ~256 MB (기본) | Stage 3 | maxmemory-policy 설정, 스케일 업 |
@@ -626,7 +627,7 @@ flowchart TD
 | **RDS 삭제 보호** | 비활성화 | **활성화** |
 | **etcd 관리** | 자체 관리 **(백업 미설정)** | **AWS 관리 (자동)** |
 | **파일 스토리지** | S3 (PVC 제거) | **S3 (PVC 없음)** |
-| **모니터링** | Prometheus + Grafana | Prometheus + Grafana |
+| **모니터링** | Prometheus + Grafana | **Prometheus + Grafana + Alertmanager (Slack 알림)** |
 | **ArgoCD sync** | 자동 | **수동** |
 | **CloudTrail 보존** | 30일 | **90일** |
 | **ECR 이미지 보존** | 3개 | **20개** |
@@ -667,28 +668,29 @@ flowchart LR
         HPA["HPA<br/>API Pod 2→4"]
     end
 
-    subgraph Node_Level["노드 레벨 (비활성)"]
-        ASG["EKS ASG<br/>min 2 · max 4<br/>(수동 관리)"]
-        CA["Cluster Autoscaler<br/>❌ 미설치"]
+    subgraph Node_Level["노드 레벨 (활성)"]
+        CA["Cluster Autoscaler<br/>✅ IRSA 인증<br/>ASG autodiscovery"]
+        ASG["EKS ASG<br/>min 2 · max 4<br/>(자동 관리)"]
     end
 
     MetricsSrv -->|"CPU > 70%"| HPA
     HPA -->|"Pod Pending"| CA
-    CA -.->|"미설치 → 자동 대응 불가"| ASG
+    CA -->|"노드 자동 추가/제거"| ASG
 
     style Pod_Level fill:#e8f5e9,stroke:#2e7d32
-    style Node_Level fill:#fce4ec,stroke:#c62828
-    style CA fill:#ef5350,color:#fff,stroke:#b71c1c
+    style Node_Level fill:#e8f5e9,stroke:#2e7d32
+    style CA fill:#66bb6a,color:#fff,stroke:#2e7d32
 ```
 
-**현재 한계**: HPA(Pod 수준)는 활성화되어 있지만, Cluster Autoscaler(노드 수준)가 설치되지 않았습니다. ASG max 4라는 인프라는 준비되어 있으나, Pod Pending 시 자동으로 노드를 추가하는 트리거가 없습니다.
+**2계층 Auto Scaling 완성**: HPA(Pod 수준)와 Cluster Autoscaler(노드 수준)가 모두 활성화되어, 트래픽 증가 시 Pod 확장 → 노드 자동 추가까지 완전 자동화되었습니다. Cluster Autoscaler는 IRSA(IAM Roles for Service Accounts)로 Terraform 관리 IAM Role을 사용하며, ASG autodiscovery로 노드 그룹을 자동 감지합니다. 스케일 다운 쿨다운은 10분으로 설정되어 빈번한 노드 추가/제거를 방지합니다.
 
-| 항목 | 현재 | Cluster Autoscaler 도입 후 |
-| --- | --- | --- |
-| 노드 수 | 2대 (고정) | 2~4대 (동적) |
-| Pod Pending 대응 | 수동 ASG 조정 | 자동 감지 + 노드 추가 (~3분) |
-| 스케일 다운 | 수동 | 부하 감소 시 자동 노드 제거 |
-| 비용 | 고정 ~$70/월 (t3.medium × 2) | 부하 비례 ~$70~$140/월 |
+| 항목 | 설정 |
+| --- | --- |
+| 노드 수 | 2~4대 (동적) |
+| Pod Pending 대응 | Cluster Autoscaler 자동 감지 + 노드 추가 (~3분) |
+| 스케일 다운 | 부하 감소 시 자동 노드 제거 (쿨다운 10분) |
+| 비용 | 부하 비례 ~$70~$140/월 (t3.medium × 2~4) |
+| IAM 인증 | IRSA (Terraform 관리 IAM Role) |
 
 ### 4.4 데이터 이중화 및 백업 전략
 
@@ -705,7 +707,7 @@ flowchart TD
 
     subgraph S3_Layer["S3 — AWS 관리형"]
         Durability["99.999999999% 내구성"]
-        Uploads["사용자 업로드 파일"]
+        Uploads["사용자 업로드 파일<br/>버전 관리 활성화"]
         CT_Logs["CloudTrail 감사 로그 (90일)"]
     end
 
@@ -715,7 +717,6 @@ flowchart TD
     end
 
     subgraph Gaps["⚠ 미비 사항"]
-        No_Version["S3 버전 관리 미활성화"]
         No_CrossRegion["크로스리전 DR 없음"]
         Redis_Single["Redis 단일 Pod"]
     end
@@ -732,7 +733,7 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | **RDS (Prod)** | AWS 자동 백업 + Multi-AZ 동기 복제 | ~0 | 14일 | AWS 관리 |
 | **RDS (Dev)** | AWS 자동 백업 | 최대 24시간 | 1일 | AWS 관리 |
-| **사용자 업로드** | S3 직접 저장 (실시간) | 0 | 무기한 | S3 |
+| **사용자 업로드** | S3 직접 저장 (실시간) + 버전 관리 활성화 | 0 (실수 삭제 시 이전 버전 복구 가능) | 무기한 | S3 |
 | **Terraform State** | S3 버전 관리 + DynamoDB 잠금 | 0 | 무기한 | S3 |
 | **CloudTrail 로그** | AWS 자동 수집 (멀티리전) | 0 | 90일 (Prod) | S3 |
 | **Redis** | 없음 (휘발성 데이터) | 전체 손실 | — | — |
@@ -823,38 +824,39 @@ kubectl -n app rollout undo deployment/community-api
 ```mermaid
 flowchart TD
     subgraph Detect["1. 탐지 — Prometheus"]
-        Pod_Restart["Pod 재시작 횟수 증가"]
-        CPU_High["노드 CPU > 80%"]
-        Pod_Pending["Pod Pending 상태"]
-        API_5xx["API 5xx 에러율 급증"]
+        Pod_Restart["PodCrashLooping<br/>Pod 재시작 횟수 증가"]
+        CPU_High["NodeCPUHigh<br/>노드 CPU > 80%"]
+        Mem_High["NodeMemoryHigh<br/>노드 메모리 > 85%"]
+        Pod_Pending["PodPending<br/>Pod Pending 5분 이상"]
+        API_5xx["APIHighErrorRate<br/>API 5xx 에러율 급증"]
     end
 
-    subgraph Alert["2. 알림 — Alertmanager (⚠ 미설정)"]
-        Slack["Slack 알림"]
-        Email["이메일 알림"]
+    subgraph Alert["2. 알림 — Alertmanager (활성화)"]
+        Slack["Slack #infra-alerts<br/>Webhook → K8s Secret"]
     end
 
     subgraph Response["3. 대응"]
         Rollback["배포 롤백<br/>git revert + ArgoCD sync"]
-        Scale["ASG 수동 조정<br/>(CA 미설치)"]
+        CA_Auto["Cluster Autoscaler<br/>자동 노드 추가"]
         Debug["Grafana 대시보드<br/>로그 분석"]
     end
 
-    Pod_Restart -.->|"미설정"| Slack
-    CPU_High -.->|"미설정"| Slack
-    Pod_Pending -.->|"미설정"| Email
-    API_5xx -.->|"미설정"| Slack
+    Pod_Restart -->|"firing"| Slack
+    CPU_High -->|"firing"| Slack
+    Mem_High -->|"firing"| Slack
+    Pod_Pending -->|"firing"| Slack
+    API_5xx -->|"firing"| Slack
 
     Slack --> Rollback
-    Slack --> Scale
-    Email --> Debug
+    Slack --> CA_Auto
+    Slack --> Debug
 
     style Detect fill:#fff3e0,stroke:#e65100
-    style Alert fill:#fce4ec,stroke:#c62828
+    style Alert fill:#e8f5e9,stroke:#2e7d32
     style Response fill:#e8f5e9,stroke:#2e7d32
 ```
 
-> **Alertmanager 미설정은 현재 가장 시급한 운영 위험입니다.** Prometheus가 메트릭을 수집하고 있지만, 이상 탐지 시 알림을 보낼 채널이 없어 야간 장애를 즉시 인지할 수 없습니다.
+**Alertmanager 설정 완료**: Prometheus가 탐지한 이상 징후를 Alertmanager가 Slack `#infra-alerts` 채널로 즉시 전달합니다. 알림 규칙 5개(PodCrashLooping, PodPending, NodeCPUHigh, NodeMemoryHigh, APIHighErrorRate)가 정의되어 있으며, Slack webhook URL은 K8s Secret으로 관리됩니다. 알림 경로: Prometheus → Alertmanager → Slack.
 
 ---
 
@@ -865,10 +867,12 @@ flowchart TD
 | 강점 | 설명 |
 | --- | --- |
 | **AZ 분산 완성** | TopologySpread + PVC 제거로 API·FE Pod가 2개 AZ에 분산. 단일 노드/AZ 장애 시 RTO 0초 |
+| **2계층 Auto Scaling** | HPA(Pod) + Cluster Autoscaler(노드)로 트래픽 증가 시 Pod 확장 → 노드 자동 추가까지 완전 자동화 |
 | **관리형 컨트롤 플레인** | EKS로 etcd 백업·업그레이드·패치 자동화. kubeadm 대비 운영 부담 대폭 감소 |
 | **네트워크 보안 강화** | 프라이빗 서브넷 + NLB. 노드 IP 비노출, kubeadm의 퍼블릭 노드 대비 공격 표면 최소화 |
 | **예측 가능한 DB 커넥션** | HPA로 Pod 수 제어 → 커넥션 풀 폭발 위험 제거 |
-| **데이터 내구성** | RDS Multi-AZ (RPO ~0) + S3 (11 nines) + 14일 자동 백업 |
+| **데이터 내구성** | RDS Multi-AZ (RPO ~0) + S3 (11 nines, 버전 관리 활성화) + 14일 자동 백업 |
+| **장애 알림 자동화** | Alertmanager → Slack 알림 (5개 규칙), 야간 장애 즉시 인지 가능 |
 | **GitOps CD** | ArgoCD App-of-Apps 패턴, OIDC 인증, Git revert 즉시 롤백 |
 | **IaC 완전 관리** | Terraform 12개 모듈 + Kustomize overlay로 전체 인프라 코드화 |
 | **PDB 보호** | 3개 Deployment에 PDB 적용, 유지보수 시 최소 가용성 보장 |
@@ -877,22 +881,22 @@ flowchart TD
 
 | 약점 | 영향 | 위험 시점 | 심각도 |
 | --- | --- | --- | --- |
-| **Alertmanager 미설정** | 장애 인지 지연 (Grafana 수동 확인만) | 즉시 (야간 장애 시) | **Critical** |
-| **Cluster Autoscaler 미설치** | Pod Pending 시 수동 ASG 조정 필요 | Stage 1 (DAU 300+) | **High** |
+| ~~Alertmanager 미설정~~ | ✅ **해소** — Slack 알림 5개 규칙 활성화 | — | ~~Critical~~ |
+| ~~Cluster Autoscaler 미설치~~ | ✅ **해소** — IRSA + ASG autodiscovery, min 2 / max 4 | — | ~~High~~ |
+| ~~S3 버전 관리 미활성화~~ | ✅ **해소** — 업로드 버킷 버전 관리 활성화 | — | ~~Medium~~ |
 | **Redis 단일 Pod** | Rate Limiter 무력화, WS 브로드캐스트 중단 | 즉시 (Redis 장애 시) | **Medium** |
 | **K8s Secrets 수동 관리** | Secret 변경 시 수동 apply, 이력 관리 불가 | 운영 복잡도 증가 | **Medium** |
-| **S3 버전 관리 미활성화** | 업로드 파일 실수 삭제 시 복구 불가 | 즉시 (오삭제 시) | **Medium** |
 | **크로스리전 DR 없음** | 서울 리전 장애 시 전면 중단 | 리전 장애 시 | Low |
 
 ### 5.3 개선 로드맵
 
-#### 즉시 (비용 0~$5/월)
+#### 즉시 (비용 0~$5/월) — ✅ 전항목 완료
 
-| 항목 | 작업 | 효과 | 위험 제거 |
+| 항목 | 작업 | 효과 | 상태 |
 | --- | --- | --- | --- |
-| **Alertmanager 설정** | Slack/이메일 알림 규칙 정의 | 장애 즉시 인지, 야간 대응 가능 | Critical → 해소 |
-| **Cluster Autoscaler 설치** | Helm chart 배포 + ASG 태그 설정 | Pod Pending 자동 해소 (ASG max 4 활용) | High → 해소 |
-| **S3 버전 관리 활성화** | Terraform 설정 추가 | 업로드 파일 실수 삭제 복구 가능 | Medium → 해소 |
+| ✅ **Alertmanager 설정** | Slack 알림 규칙 5개 정의 (PodCrashLooping, PodPending, NodeCPUHigh, NodeMemoryHigh, APIHighErrorRate) | 장애 즉시 인지, 야간 대응 가능 | Critical → **해소** |
+| ✅ **Cluster Autoscaler 설치** | IRSA + ASG autodiscovery, min 2 / max 4, 스케일 다운 쿨다운 10분 | Pod Pending 자동 해소 (ASG max 4 활용) | High → **해소** |
+| ✅ **S3 버전 관리 활성화** | 업로드 버킷 versioning 활성화 (Terraform) | 실수 삭제 시 이전 버전 복구 가능 (RPO 0) | Medium → **해소** |
 
 #### 단기 — Stage 1 (DAU 300, 월 ~$20 추가)
 
@@ -920,4 +924,4 @@ flowchart TD
 
 ---
 
-> **요약**: kubeadm → EKS 전환과 Pod 토폴로지 재설계를 통해, 단일 노드 장애 시 RTO를 2~5분에서 **0초**로 단축했습니다. PVC 제거 → S3 전환 → TopologySpread 적용 → PDB 추가의 연쇄적 설계 결정이 이 결과를 만들었습니다. RDS Multi-AZ(RPO ~0, RTO 60~120초), NLB 멀티 AZ, NAT GW per AZ로 모든 계층에서 AZ 수준 장애 내성을 확보했습니다. **가장 시급한 개선 과제는 Alertmanager 설정과 Cluster Autoscaler 설치**이며, 두 항목 모두 추가 비용 없이 즉시 적용 가능합니다.
+> **요약**: kubeadm → EKS 전환과 Pod 토폴로지 재설계를 통해, 단일 노드 장애 시 RTO를 2~5분에서 **0초**로 단축했습니다. PVC 제거 → S3 전환 → TopologySpread 적용 → PDB 추가의 연쇄적 설계 결정이 이 결과를 만들었습니다. RDS Multi-AZ(RPO ~0, RTO 60~120초), NLB 멀티 AZ, NAT GW per AZ로 모든 계층에서 AZ 수준 장애 내성을 확보했습니다. "즉시" 우선순위 항목(Alertmanager 설정, Cluster Autoscaler 설치, S3 버전 관리 활성화)이 **전항목 완료**되어, 장애 알림 자동화(Slack), 노드 자동 확장(IRSA + ASG autodiscovery), 파일 삭제 복구(S3 versioning)가 모두 운영 상태입니다. **다음 개선 과제는 "단기" 항목인 External Secrets Operator(Secret 자동 동기화)와 Redis Sentinel(Redis 단일 장애점 제거)**입니다.
