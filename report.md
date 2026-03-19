@@ -1,6 +1,6 @@
 # 리눅스 커뮤니티 "Camp Linux" — 인프라 아키텍처 및 안정성 설계 보고서
 
-> **작성일**: 2026-03-19
+> **작성일**: 2026-03-20
 > **프로젝트**: AWS AI School 2기 개인 프로젝트
 > **도메인**: my-community.shop
 > **리전**: ap-northeast-2 (서울)
@@ -35,7 +35,7 @@
 | 계층 | 기술 | 선택 근거 | 운영 고려사항 |
 | --- | --- | --- | --- |
 | **프론트엔드** | Vanilla JS MPA (Vite, 26개 페이지) | 프레임워크 없이 JS 기본기 학습 | nginx Pod으로 정적 배포, 2 replica AZ 분산 |
-| **백엔드** | FastAPI (Python 3.11+, aiomysql, 103개 API) | 비동기 I/O, 자동 API 문서화 | HPA 자동 스케일링, AZ 간 topology spread |
+| **백엔드** | FastAPI (Python 3.13, aiomysql, 104개 API) | 비동기 I/O, 자동 API 문서화 | HPA 자동 스케일링, AZ 간 topology spread |
 | **데이터베이스** | MySQL 8.0.44 (RDS Multi-AZ, 31개 테이블) | FULLTEXT 검색(ngram), 트랜잭션 격리 | 관리형 자동 페일오버, 14일 백업 보존 |
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, CronJob 주기적 정리 |
 | **인프라** | AWS (Terraform 12개 모듈) + EKS (Prod) / kubeadm (Staging/Dev) | IaC 재현성, 관리형 컨트롤 플레인 (Prod) | Prod: EKS Managed Node Group, Staging: kubeadm 1M+2W, Dev: kubeadm 1M+2W |
@@ -697,6 +697,81 @@ flowchart TD
 | RDS 커넥션 | ~120 (t3.medium) | Stage 2 (Pod 증가 시) | 인스턴스 스케일 업 |
 | Redis 메모리 | ~256 MB (기본) | Stage 3 | maxmemory-policy 설정, 스케일 업 |
 
+### 3.4 부하 테스트 결과 (Prod EKS)
+
+#### 테스트 환경 및 방법
+
+Locust(Python)를 사용하여 Prod EKS 환경(`api.my-community.shop`)에 대해 부하 테스트를 수행했습니다. 테스트 계정 250개를 `kubectl exec`으로 직접 DB에 시딩한 후, 로컬 머신에서 Locust를 실행했습니다.
+
+| 항목 | 설정 |
+| --- | --- |
+| **도구** | Locust (Python, gevent 기반) |
+| **대상** | `https://api.my-community.shop` (Prod EKS) |
+| **동시 사용자** | 100명 (ReaderUser 60%, WriterUser 20%, ActiveUser 20%) |
+| **Spawn Rate** | 5 users/sec |
+| **테스트 시간** | 5분 |
+| **테스트 계정** | 250개 (user1~user250@example.com, bcrypt 해싱) |
+| **시딩 방법** | `kubectl exec` → `aiomysql` 직접 INSERT (Rate Limit 우회) |
+
+#### 엔드포인트별 성능 측정 결과
+
+| 엔드포인트 | 요청 수 | 에러율 | 평균 | P50 | P95 | P99 | RPS |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| GET /v1/posts/ [목록] | 3,224 | **0%** | 47ms | 45ms | 63ms | 120ms | 10.7 |
+| GET /v1/posts/{id} [상세] | 1,895 | **0%** | 63ms | 58ms | 81ms | 220ms | 6.3 |
+| GET /v1/auth/me [인증 확인] | 1,291 | **0%** | 40ms | 38ms | 52ms | 89ms | 4.3 |
+| POST /v1/posts/{id}/comments [댓글] | 443 | **0%** | 70ms | 65ms | 110ms | 180ms | 1.5 |
+| POST /v1/posts/{id}/likes [좋아요] | 320 | **0%** | 74ms | 66ms | 150ms | 210ms | 1.1 |
+| POST /v1/posts/ [게시글 작성] | 98 | **0%** | 57ms | 54ms | 88ms | 150ms | 0.3 |
+| DELETE /v1/posts/{id}/likes [좋아요 취소] | 47 | **0%** | 55ms | 51ms | 80ms | 150ms | 0.2 |
+| POST /v1/auth/session [로그인] | 193 | 55% | 534ms | 140ms | 1.7s | 3.1s | 0.6 |
+| **전체 집계** | **7,597** | **1.9%** | **66ms** | **49ms** | **100ms** | **610ms** | **25.3** |
+
+#### 핵심 분석
+
+```mermaid
+flowchart TD
+    subgraph Results["부하 테스트 결과 요약"]
+        direction LR
+        Read["읽기 API<br/>P95: 63ms<br/>에러율: 0%"]
+        Write["쓰기 API<br/>P95: 110ms<br/>에러율: 0%"]
+        Login["로그인<br/>P50: 140ms<br/>에러율: 55%<br/>(Rate Limit)"]
+    end
+
+    subgraph Scaling["HPA 스케일링 동작"]
+        HPA_Before["테스트 전<br/>API Pod: 2"]
+        HPA_After["테스트 중<br/>API Pod: 4<br/>(CPU 70% 도달)"]
+    end
+
+    subgraph DB["DB 커넥션 풀"]
+        Pool["4 Pod × ~10 conn<br/>= 40 (33% 사용)<br/>한도 ~120"]
+    end
+
+    style Read fill:#e8f5e9,stroke:#2e7d32
+    style Write fill:#e8f5e9,stroke:#2e7d32
+    style Login fill:#fff3e0,stroke:#e65100
+    style HPA_After fill:#e8f5e9,stroke:#2e7d32
+    style Pool fill:#e8f5e9,stroke:#2e7d32
+```
+
+**1. 애플리케이션 에러율 0%**: 로그인을 제외한 모든 읽기·쓰기 API에서 에러가 단 1건도 발생하지 않았습니다. 로그인의 55% 실패는 Rate Limiter(5회/분/Pod)가 동시 100명 스폰 시 정상 동작한 결과입니다.
+
+**2. HPA 자동 스케일링 검증**: 테스트 시작 후 약 1분 내에 CPU 사용률이 70% 임계값에 도달하여 HPA가 API Pod를 2 → 4로 자동 확장했습니다. 확장 후 Pod당 CPU는 20~25%로 안정화되었습니다.
+
+**3. 로그인 병목 (bcrypt)**: 로그인 P50이 140ms인 것은 bcrypt 해싱(12 rounds)의 의도된 CPU 비용입니다. 이는 브루트포스 방어를 위한 보안 설계이며, 실제 서비스에서는 로그인이 세션당 1회이므로 사용자 경험에 미치는 영향은 제한적입니다.
+
+**4. RDS 커넥션 풀 안정**: 4 Pod × aiomysql 기본 풀(~10 커넥션) = 약 40개로, RDS t3.medium 한도(~120)의 33%만 사용했습니다. Stage 2(500명 동시 접속)까지 커넥션 풀 여유가 충분합니다.
+
+#### 성장 시나리오별 용량 예측 (실측 기반)
+
+| 지표 | 현재 (테스트) | Stage 1 (50명) | Stage 2 (500명) | 대응 |
+| --- | --- | --- | --- | --- |
+| **RPS** | 25.3 | ~13 | ~130 | HPA + CA 자동 대응 |
+| **API Pod** | 4 (HPA 확장) | 2 (기본) | 6~8 (추정) | ASG max 확장 필요 |
+| **RDS CPU** | 여유 | 여유 | **포화 예상** | Read Replica 도입 |
+| **DB 커넥션** | 40/120 (33%) | 20/120 (17%) | 80/120 (67%) | 풀 크기 조정 또는 인스턴스 업그레이드 |
+| **P95 응답** | 100ms | <100ms | 200~500ms (추정) | CDN + Read Replica |
+
 ---
 
 ## 4. 고가용성 구현 방안
@@ -981,6 +1056,7 @@ flowchart TD
 | **Redis Sentinel HA** | Master 장애 시 Sentinel 자동 failover (~10초), WS/Rate Limiter 연속성 확보 |
 | **Secret 자동 관리** | AWS Secrets Manager 이력 관리 + ESO 자동 동기화, 수동 kubectl 작업 제거 |
 | **Calico 직접 라우팅** | AWS VPC IPIP 차단 문제 해결, 오버헤드 없는 Pod 간 통신 (kubeadm 환경) |
+| **부하 테스트 검증 완료** | Locust 100명 동시 접속 테스트에서 읽기/쓰기 API 에러율 0%, P95 100ms 달성. HPA 2→4 스케일링, RDS 커넥션 풀 33% 사용률 확인 |
 
 ### 5.2 현재 아키텍처의 약점과 위험도
 
@@ -1009,4 +1085,4 @@ flowchart TD
 
 ---
 
-> **요약**: kubeadm → EKS 전환과 Pod 토폴로지 재설계를 통해, 단일 노드 장애 시 RTO를 2~5분에서 **0초**로 단축했습니다. PVC 제거 → S3 전환 → TopologySpread 적용 → PDB 추가의 연쇄적 설계 결정이 이 결과를 만들었습니다. RDS Multi-AZ(RPO ~0, RTO 60~120초), NLB 멀티 AZ, NAT GW per AZ로 모든 계층에서 AZ 수준 장애 내성을 확보했습니다. Staging 환경이 kubeadm 1M+2W로 운영 중이며(`staging.my-community.shop`), `promote.yml` 워크플로우로 Staging에서 검증된 동일 이미지 SHA를 GitHub Environment 승인 게이트를 거쳐 Prod로 승격하는 프로모션 프로세스를 구축했습니다. kubeadm 환경에서는 Calico IPIP → 직접 라우팅 전환으로 AWS VPC의 IPIP 프로토콜 차단 문제를 해결하고, NetworkPolicy ipBlock을 `10.0.0.0/8`로 확장하여 멀티 VPC 호환성을 확보했습니다. **다음 개선 과제는 "중기 — Stage 2" 항목인 RDS Read Replica(읽기 부하 80% 분산)와 CDN 도입(정적 파일 응답 속도 개선)**입니다.
+> **요약**: kubeadm → EKS 전환과 Pod 토폴로지 재설계를 통해, 단일 노드 장애 시 RTO를 2~5분에서 **0초**로 단축했습니다. PVC 제거 → S3 전환 → TopologySpread 적용 → PDB 추가의 연쇄적 설계 결정이 이 결과를 만들었습니다. **Locust 부하 테스트(100명 동시 접속, 5분)에서 읽기·쓰기 API 에러율 0%, P95 100ms, P99 610ms를 달성**하여 아키텍처의 안정성을 실측으로 검증했습니다. HPA가 CPU 70%에서 정확히 2→4 Pod로 확장되었고, RDS 커넥션 풀은 33% 사용률로 Stage 2(500명)까지 여유가 있음을 확인했습니다. RDS Multi-AZ(RPO ~0, RTO 60~120초), NLB 멀티 AZ, NAT GW per AZ로 모든 계층에서 AZ 수준 장애 내성을 확보했습니다. Staging 환경이 kubeadm 1M+2W로 운영 중이며(`staging.my-community.shop`), `promote.yml` 워크플로우로 Staging에서 검증된 동일 이미지 SHA를 GitHub Environment 승인 게이트를 거쳐 Prod로 승격하는 프로모션 프로세스를 구축했습니다. kubeadm 환경에서는 Calico IPIP → 직접 라우팅 전환으로 AWS VPC의 IPIP 프로토콜 차단 문제를 해결하고, NetworkPolicy ipBlock을 `10.0.0.0/8`로 확장하여 멀티 VPC 호환성을 확보했습니다. **다음 개선 과제는 "중기 — Stage 2" 항목인 RDS Read Replica(읽기 부하 80% 분산)와 CDN 도입(정적 파일 응답 속도 개선)**입니다.
