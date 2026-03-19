@@ -33,3 +33,7 @@ output "oidc_provider_url" {
 output "cluster_autoscaler_role_arn" {
   value = aws_iam_role.cluster_autoscaler.arn
 }
+
+output "external_secrets_role_arn" {
+  value = aws_iam_role.external_secrets.arn
+}

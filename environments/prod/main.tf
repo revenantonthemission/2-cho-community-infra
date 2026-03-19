@@ -218,3 +218,36 @@ resource "aws_security_group_rule" "rds_from_eks" {
   source_security_group_id = module.eks[0].cluster_security_group_id
   description              = "EKS nodes to RDS MySQL"
 }
+
+# =============================================================================
+# Secrets Manager (External Secrets Operator 연동용)
+# K8s community-secrets의 값을 Secrets Manager에서 관리
+# =============================================================================
+resource "aws_secretsmanager_secret" "community" {
+  count = var.create_eks_cluster ? 1 : 0
+
+  name        = "${var.project}-${var.environment}-community-secrets"
+  description = "Community app secrets (ESO synced to K8s)"
+
+  tags = local.common_tags
+}
+
+# 초기 값은 빈 JSON — 실제 값은 AWS 콘솔 또는 CLI로 설정
+# ESO가 이 secret을 읽어 K8s Secret으로 동기화
+resource "aws_secretsmanager_secret_version" "community" {
+  count = var.create_eks_cluster ? 1 : 0
+
+  secret_id = aws_secretsmanager_secret.community[0].id
+  secret_string = jsonencode({
+    DB_PASSWORD          = var.db_password
+    SECRET_KEY           = ""
+    GITHUB_CLIENT_ID     = ""
+    GITHUB_CLIENT_SECRET = ""
+    INTERNAL_API_KEY     = ""
+  })
+
+  # 초기 생성 후 AWS 콘솔/CLI에서 값을 업데이트하므로 이후 변경 무시
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}

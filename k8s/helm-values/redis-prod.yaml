@@ -1,0 +1,46 @@
+# Redis Sentinel HA (Prod)
+# Rate Limiter + WS pub/sub 용도 — 데이터가 휘발성이므로 persistence 비활성화
+architecture: replication
+
+auth:
+  enabled: false
+
+sentinel:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+master:
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+replica:
+  replicaCount: 3
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack

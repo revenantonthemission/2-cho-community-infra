@@ -68,3 +68,8 @@ output "cluster_autoscaler_role_arn" {
   description = "Cluster Autoscaler IRSA Role ARN"
   value       = var.create_eks_cluster ? module.eks[0].cluster_autoscaler_role_arn : null
 }
+
+output "external_secrets_role_arn" {
+  description = "External Secrets Operator IRSA Role ARN"
+  value       = var.create_eks_cluster ? module.eks[0].external_secrets_role_arn : null
+}
