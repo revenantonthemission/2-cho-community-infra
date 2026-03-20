@@ -59,6 +59,11 @@ variable "aws_region" {
   default = "ap-northeast-2"
 }
 
+variable "domain_name" {
+  type    = string
+  default = "my-community.shop"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

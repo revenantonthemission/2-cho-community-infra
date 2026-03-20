@@ -274,6 +274,70 @@ resource "aws_iam_role" "external_secrets" {
   tags = var.tags
 }
 
+# =============================================================================
+# App API IRSA (S3 업로드 + SES 이메일 발송)
+# EKS Pod는 IMDS 접근이 차단되므로 IRSA로 AWS 권한 부여
+# =============================================================================
+resource "aws_iam_role" "app_api" {
+  name = "${var.project}-${var.environment}-app-s3"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:app:community-api"
+          "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "app_s3_uploads" {
+  count = var.enable_s3_uploads ? 1 : 0
+  name  = "s3-uploads"
+  role  = aws_iam_role.app_api.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket"]
+      Resource = [
+        var.s3_uploads_bucket_arn,
+        "${var.s3_uploads_bucket_arn}/*"
+      ]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "app_ses_send" {
+  name = "ses-send"
+  role = aws_iam_role.app_api.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+      Resource = "*"
+      Condition = {
+        StringEquals = {
+          "ses:FromAddress" = "noreply@${var.domain_name}"
+        }
+      }
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "external_secrets" {
   name = "secrets-manager-read"
   role = aws_iam_role.external_secrets.id

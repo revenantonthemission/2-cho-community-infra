@@ -31,6 +31,7 @@ spec:
                   matchLabels:
                     app: community-api
                 topologyKey: kubernetes.io/hostname
+      serviceAccountName: community-api
       imagePullSecrets:
         - name: ecr-cred
       containers:

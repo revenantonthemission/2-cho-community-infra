@@ -37,3 +37,7 @@ output "cluster_autoscaler_role_arn" {
 output "external_secrets_role_arn" {
   value = aws_iam_role.external_secrets.arn
 }
+
+output "app_api_role_arn" {
+  value = aws_iam_role.app_api.arn
+}

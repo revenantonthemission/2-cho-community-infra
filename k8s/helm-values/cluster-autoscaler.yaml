@@ -1,3 +1,8 @@
+# EKS 1.31에는 CA chart 9.43.x + image v1.31.0 필수
+# 최신 chart는 DRA API(resourceslices.resource.k8s.io) 오류 발생
+image:
+  tag: v1.31.0
+
 autoDiscovery:
   clusterName: my-community-prod
 
