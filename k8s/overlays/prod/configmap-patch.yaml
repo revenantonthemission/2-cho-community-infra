@@ -13,6 +13,6 @@ data:
   FRONTEND_URL: "https://my-community.shop"
   TRUSTED_PROXIES: '["10.2.0.0/16"]'
   DEBUG: "false"
-  REDIS_URL: "redis://redis.data.svc.cluster.local:6379"
+  REDIS_URL: "redis://redis-node-0.redis-headless.data.svc.cluster.local:6379"
   UPLOAD_DIR: ""
   TESTING: "false"
