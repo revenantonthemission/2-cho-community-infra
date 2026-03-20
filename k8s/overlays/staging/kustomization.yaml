@@ -18,4 +18,4 @@ images:
   newTag: sha-ea70a85c
 - name: community-frontend
   newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-staging-frontend-k8s
-  newTag: sha-a64c8c7b
+  newTag: sha-1d55eace
