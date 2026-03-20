@@ -13,7 +13,7 @@ patches:
 images:
 - name: community-backend
   newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod-backend-k8s
-  newTag: sha-1a04cd2d
+  newTag: sha-ea70a85c
 - name: community-frontend
   newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod-frontend-k8s
   newTag: sha-a64c8c7b
