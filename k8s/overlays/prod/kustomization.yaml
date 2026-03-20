@@ -16,4 +16,4 @@ images:
   newTag: sha-1a04cd2d
 - name: community-frontend
   newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod-frontend-k8s
-  newTag: sha-e231de09
+  newTag: sha-a64c8c7b
