@@ -23,6 +23,13 @@
 - Docker (컨테이너 이미지 빌드용, `--platform linux/amd64` 필수)
 - kubectl (K8s 클러스터 관리용)
 
+### 초기 설정
+
+```bash
+# Git hooks 활성화 (terraform fmt 자동 검사)
+git config core.hooksPath .githooks
+```
+
 ## 계획 (Plan)
 
 ### 1. 시스템 아키텍처
