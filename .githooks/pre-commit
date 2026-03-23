@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Terraform 포맷 검사 — 커밋 전 자동 실행
+set -euo pipefail
+
+# terraform 설치 여부 확인
+if ! command -v terraform &> /dev/null; then
+    echo "⚠ terraform not found, skipping format check"
+    exit 0
+fi
+
+# 변경된 .tf 파일만 검사
+STAGED_TF=$(git diff --cached --name-only --diff-filter=ACM -- '*.tf' || true)
+
+if [ -z "$STAGED_TF" ]; then
+    exit 0
+fi
+
+echo "=== Terraform Format Check ==="
+if ! terraform fmt -check -recursive . > /dev/null 2>&1; then
+    echo "❌ Terraform formatting issues detected. Run: terraform fmt -recursive ."
+    exit 1
+fi
+
+echo "✅ Terraform format OK"
