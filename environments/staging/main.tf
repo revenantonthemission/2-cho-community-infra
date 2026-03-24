@@ -59,8 +59,7 @@ module "vpc" {
   vpc_cidr    = var.vpc_cidr
   az_count    = var.az_count
 
-  single_nat_gateway    = var.single_nat_gateway
-  bastion_allowed_cidrs = var.bastion_allowed_cidrs
+  single_nat_gateway = var.single_nat_gateway
 
   tags = local.common_tags
 }
@@ -168,25 +167,6 @@ module "rds" {
 }
 
 # =============================================================================
-# Module 10: EC2 + EIP (Bastion Host)
-# =============================================================================
-module "ec2" {
-  source = "../../modules/ec2"
-
-  project     = var.project
-  environment = var.environment
-
-  public_subnet_id          = module.vpc.public_subnet_ids[0]
-  bastion_security_group_id = module.vpc.bastion_security_group_id
-
-  create_bastion = false # staging: 배스천 불필요 (bastion_allowed_cidrs 비어 있음)
-  instance_type  = var.bastion_instance_type
-  ssh_public_key = var.bastion_ssh_public_key
-
-  tags = local.common_tags
-}
-
-# =============================================================================
 # Module 11: CloudTrail
 # =============================================================================
 module "cloudtrail" {
@@ -211,7 +191,7 @@ module "k8s_ec2" {
   project     = var.project
   environment = var.environment
 
-  vpc_id            = module.vpc.vpc_id
+  vpc_id = module.vpc.vpc_id
   # c7i-flex.large는 ap-northeast-2a 미지원 → 2b 서브넷만 전달
   public_subnet_ids = [module.vpc.public_subnet_ids[1]]
 

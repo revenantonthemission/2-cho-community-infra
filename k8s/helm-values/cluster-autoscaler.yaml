@@ -1,0 +1,35 @@
+# EKS 1.31에는 CA chart 9.43.x + image v1.31.0 필수
+# 최신 chart는 DRA API(resourceslices.resource.k8s.io) 오류 발생
+image:
+  tag: v1.31.0
+
+autoDiscovery:
+  clusterName: my-community-prod
+
+awsRegion: ap-northeast-2
+
+rbac:
+  serviceAccount:
+    create: true
+    name: cluster-autoscaler
+    annotations:
+      # IRSA: Terraform EKS 모듈에서 생성한 IAM Role ARN
+      # terraform output -raw cluster_autoscaler_role_arn 으로 확인
+      eks.amazonaws.com/role-arn: "arn:aws:iam::559352512800:role/my-community-prod-cluster-autoscaler"
+
+extraArgs:
+  # EKS Managed Node Group은 expander 불필요 (ASG 1개)
+  balance-similar-node-groups: true
+  skip-nodes-with-local-storage: false
+  skip-nodes-with-system-pods: false
+  # 스케일 다운 설정
+  scale-down-delay-after-add: 10m
+  scale-down-unneeded-time: 10m
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi

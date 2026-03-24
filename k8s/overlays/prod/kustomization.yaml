@@ -2,20 +2,18 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../../base
-  - storage/pv-prometheus.yaml
-  - storage/pv-redis.yaml
-  - storage/pv-uploads.yaml
-  - storage/pvc-uploads.yaml
+- ../../base
+- storage/pv-prometheus.yaml
+- storage/pv-redis.yaml
 
 patches:
-  - path: configmap-patch.yaml
-  - path: ingress-patch.yaml
+- path: configmap-patch.yaml
+- path: ingress-patch.yaml
 
 images:
-  - name: community-backend
-    newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod-backend-k8s
-    newTag: latest
-  - name: community-frontend
-    newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod-frontend-k8s
-    newTag: latest
+- name: community-backend
+  newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod-backend-k8s
+  newTag: sha-ea70a85c
+- name: community-frontend
+  newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-prod-frontend-k8s
+  newTag: sha-f57fb11b

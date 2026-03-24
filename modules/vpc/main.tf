@@ -39,7 +39,7 @@ resource "aws_internet_gateway" "this" {
 }
 
 # -----------------------------------------------------------------------------
-# Public Subnets (Bastion, NAT Gateway)
+# Public Subnets (NAT Gateway, K8s nodes)
 # -----------------------------------------------------------------------------
 resource "aws_subnet" "public" {
   count = var.az_count
@@ -78,7 +78,7 @@ resource "aws_route_table_association" "public" {
 }
 
 # -----------------------------------------------------------------------------
-# NAT Gateway (Lambda가 외부 API 호출 시 필요)
+# NAT Gateway (Private 서브넷 아웃바운드)
 # -----------------------------------------------------------------------------
 resource "aws_eip" "nat" {
   count  = local.nat_gateway_count
@@ -103,7 +103,7 @@ resource "aws_nat_gateway" "this" {
 }
 
 # -----------------------------------------------------------------------------
-# Private Subnets (Lambda, RDS, EFS)
+# Private Subnets (RDS, K8s workers)
 # -----------------------------------------------------------------------------
 resource "aws_subnet" "private" {
   count = var.az_count
@@ -150,29 +150,7 @@ resource "aws_route_table_association" "private" {
 # Security Groups
 # -----------------------------------------------------------------------------
 
-# Lambda 보안 그룹: RDS, EFS 아웃바운드 + 인터넷 아웃바운드
-resource "aws_security_group" "lambda" {
-  name_prefix = "${var.project}-${var.environment}-lambda-"
-  description = "Lambda function security group"
-  vpc_id      = aws_vpc.this.id
-
-  tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-lambda-sg"
-  })
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_vpc_security_group_egress_rule" "lambda_all_outbound" {
-  security_group_id = aws_security_group.lambda.id
-  description       = "Lambda to Internet via NAT Gateway"
-  ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
-}
-
-# RDS 보안 그룹: Lambda에서만 3306 인바운드 허용
+# RDS 보안 그룹
 resource "aws_security_group" "rds" {
   name_prefix = "${var.project}-${var.environment}-rds-"
   description = "RDS MySQL security group"
@@ -187,77 +165,3 @@ resource "aws_security_group" "rds" {
   }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "rds_from_lambda" {
-  security_group_id            = aws_security_group.rds.id
-  description                  = "MySQL from Lambda"
-  ip_protocol                  = "tcp"
-  from_port                    = 3306
-  to_port                      = 3306
-  referenced_security_group_id = aws_security_group.lambda.id
-}
-
-resource "aws_vpc_security_group_ingress_rule" "rds_from_bastion" {
-  security_group_id            = aws_security_group.rds.id
-  description                  = "MySQL from Bastion (DB admin)"
-  ip_protocol                  = "tcp"
-  from_port                    = 3306
-  to_port                      = 3306
-  referenced_security_group_id = aws_security_group.bastion.id
-}
-
-# EFS 보안 그룹: Lambda에서만 NFS(2049) 인바운드 허용
-resource "aws_security_group" "efs" {
-  name_prefix = "${var.project}-${var.environment}-efs-"
-  description = "EFS security group"
-  vpc_id      = aws_vpc.this.id
-
-  tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-efs-sg"
-  })
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "efs_from_lambda" {
-  security_group_id            = aws_security_group.efs.id
-  description                  = "NFS from Lambda"
-  ip_protocol                  = "tcp"
-  from_port                    = 2049
-  to_port                      = 2049
-  referenced_security_group_id = aws_security_group.lambda.id
-}
-
-# Bastion 보안 그룹: SSH 인바운드 (제한된 IP에서만)
-resource "aws_security_group" "bastion" {
-  name_prefix = "${var.project}-${var.environment}-bastion-"
-  description = "Bastion host security group"
-  vpc_id      = aws_vpc.this.id
-
-  tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-bastion-sg"
-  })
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "bastion_ssh" {
-  count = length(var.bastion_allowed_cidrs)
-
-  security_group_id = aws_security_group.bastion.id
-  description       = "SSH from allowed CIDR"
-  ip_protocol       = "tcp"
-  from_port         = 22
-  to_port           = 22
-  cidr_ipv4         = var.bastion_allowed_cidrs[count.index]
-}
-
-resource "aws_vpc_security_group_egress_rule" "bastion_all_outbound" {
-  security_group_id = aws_security_group.bastion.id
-  description       = "Bastion all outbound"
-  ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
-}

@@ -16,8 +16,6 @@ vpc_cidr           = "10.2.0.0/16"
 az_count           = 2
 single_nat_gateway = false
 
-bastion_allowed_cidrs = []
-
 # S3 / CloudTrail
 cloudtrail_log_retention_days = 90
 
@@ -41,9 +39,6 @@ rds_deletion_protection   = true
 db_name     = "community_service"
 db_username = "admin"
 # db_password → secret.tfvars
-
-# EC2 (Bastion)
-bastion_instance_type = "t3.micro"
 
 # EKS 클러스터
 create_eks_cluster      = true

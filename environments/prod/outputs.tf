@@ -47,12 +47,6 @@ output "rds_endpoint" {
   value       = module.rds.endpoint
 }
 
-# EC2 (Bastion)
-output "bastion_public_ip" {
-  description = "Bastion Elastic IP"
-  value       = module.ec2.public_ip
-}
-
 # SES
 output "ses_domain_identity_arn" {
   description = "SES Domain Identity ARN"
@@ -68,4 +62,14 @@ output "eks_cluster_name" {
 output "eks_cluster_endpoint" {
   description = "EKS 클러스터 엔드포인트"
   value       = var.create_eks_cluster ? module.eks[0].cluster_endpoint : null
+}
+
+output "cluster_autoscaler_role_arn" {
+  description = "Cluster Autoscaler IRSA Role ARN"
+  value       = var.create_eks_cluster ? module.eks[0].cluster_autoscaler_role_arn : null
+}
+
+output "external_secrets_role_arn" {
+  description = "External Secrets Operator IRSA Role ARN"
+  value       = var.create_eks_cluster ? module.eks[0].external_secrets_role_arn : null
 }

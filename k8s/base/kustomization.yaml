@@ -9,11 +9,14 @@ resources:
   - app/api-deployment.yaml
   - app/api-service.yaml
   - app/api-hpa.yaml
+  - app/api-pdb.yaml
   - app/api-servicemonitor.yaml
   - app/fe-deployment.yaml
   - app/fe-service.yaml
+  - app/fe-pdb.yaml
   - app/ws-deployment.yaml
   - app/ws-service.yaml
+  - app/ws-pdb.yaml
   - app/ingress.yaml
   - app/configmap.yaml
   - app/networkpolicy.yaml

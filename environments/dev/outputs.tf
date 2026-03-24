@@ -47,12 +47,6 @@ output "rds_endpoint" {
   value       = module.rds.endpoint
 }
 
-# EC2 (Bastion)
-output "bastion_public_ip" {
-  description = "Bastion Elastic IP"
-  value       = module.ec2.public_ip
-}
-
 # SES
 output "ses_domain_identity_arn" {
   description = "SES Domain Identity ARN"

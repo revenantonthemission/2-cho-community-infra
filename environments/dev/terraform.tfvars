@@ -16,9 +16,6 @@ vpc_cidr           = "10.0.0.0/16"
 az_count           = 2
 single_nat_gateway = true # dev: NAT GW 1개 (~$32/month 고정 비용 주의)
 
-# Bastion SSH 허용 IP
-bastion_allowed_cidrs = [] # secret.tfvars에서 관리
-
 # S3
 cloudtrail_log_retention_days = 30
 
@@ -40,10 +37,6 @@ rds_deletion_protection   = false
 # DB 자격 증명 (terraform apply 시 -var 또는 secret.tfvars로 전달)
 db_username = "manager_dev"
 # db_password는 secret.tfvars로 전달
-
-# EC2 (Free Tier: t3.micro, 750시간/월)
-bastion_instance_type  = "t3.micro"
-bastion_ssh_public_key = ""
 
 # K8s 클러스터
 create_k8s_cluster = true

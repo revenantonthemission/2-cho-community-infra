@@ -45,12 +45,6 @@ variable "single_nat_gateway" {
   default     = true
 }
 
-variable "bastion_allowed_cidrs" {
-  description = "Bastion SSH 접근을 허용할 CIDR 목록"
-  type        = list(string)
-  default     = []
-}
-
 variable "tags" {
   description = "모든 리소스에 적용할 공통 태그"
   type        = map(string)

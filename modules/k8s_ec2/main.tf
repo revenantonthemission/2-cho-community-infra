@@ -117,11 +117,11 @@ resource "aws_eip" "worker" {
 resource "aws_instance" "haproxy" {
   count = var.haproxy_enabled ? 1 : 0
 
-  ami                    = data.aws_ami.al2023.id
-  instance_type          = var.haproxy_instance_type
-  key_name               = var.ssh_key_name
-  subnet_id              = var.public_subnet_ids[0]
-  iam_instance_profile   = aws_iam_instance_profile.k8s_node.name
+  ami                  = data.aws_ami.al2023.id
+  instance_type        = var.haproxy_instance_type
+  key_name             = var.ssh_key_name
+  subnet_id            = var.public_subnet_ids[0]
+  iam_instance_profile = aws_iam_instance_profile.k8s_node.name
 
   vpc_security_group_ids = concat(
     var.haproxy_enabled ? [aws_security_group.k8s_haproxy[0].id] : [],

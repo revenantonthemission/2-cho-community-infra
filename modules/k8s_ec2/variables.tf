@@ -102,6 +102,12 @@ variable "s3_uploads_bucket_arn" {
   default     = ""
 }
 
+variable "domain_name" {
+  description = "SES 발신 도메인 (noreply@domain 형태로 사용)"
+  type        = string
+  default     = "my-community.shop"
+}
+
 variable "tags" {
   description = "공통 태그"
   type        = map(string)

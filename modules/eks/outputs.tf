@@ -29,3 +29,15 @@ output "oidc_provider_arn" {
 output "oidc_provider_url" {
   value = replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")
 }
+
+output "cluster_autoscaler_role_arn" {
+  value = aws_iam_role.cluster_autoscaler.arn
+}
+
+output "external_secrets_role_arn" {
+  value = aws_iam_role.external_secrets.arn
+}
+
+output "app_api_role_arn" {
+  value = aws_iam_role.app_api.arn
+}

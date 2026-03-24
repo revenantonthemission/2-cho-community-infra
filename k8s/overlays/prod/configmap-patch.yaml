@@ -11,6 +11,8 @@ data:
   S3_REGION: "ap-northeast-2"
   ALLOWED_ORIGINS: '["https://my-community.shop"]'
   FRONTEND_URL: "https://my-community.shop"
-  TRUSTED_PROXIES: '[]'
+  TRUSTED_PROXIES: '["10.2.0.0/16"]'
   DEBUG: "false"
+  REDIS_URL: "redis://redis-node-0.redis-headless.data.svc.cluster.local:6379"
+  UPLOAD_DIR: ""
   TESTING: "false"

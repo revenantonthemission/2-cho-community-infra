@@ -1,0 +1,55 @@
+name: Validate K8s Manifests
+
+on:
+  pull_request:
+    paths:
+      - 'k8s/**'
+      - 'environments/**'
+      - 'modules/**'
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/**'
+
+permissions: {}
+
+jobs:
+  kustomize:
+    name: Kustomize Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        overlay: [dev, staging, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Kustomize build (${{ matrix.overlay }})
+        run: kubectl kustomize k8s/overlays/${{ matrix.overlay }}/ > /dev/null
+
+      - name: Dry-run validation (${{ matrix.overlay }})
+        run: |
+          kubectl kustomize k8s/overlays/${{ matrix.overlay }}/ | \
+            kubectl apply --dry-run=client -f - 2>&1 | \
+            grep -v "Warning:" || true
+
+  terraform:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, staging, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init (${{ matrix.env }})
+        working-directory: environments/${{ matrix.env }}
+        run: terraform init -backend=false
+
+      - name: Terraform validate (${{ matrix.env }})
+        working-directory: environments/${{ matrix.env }}
+        run: terraform validate

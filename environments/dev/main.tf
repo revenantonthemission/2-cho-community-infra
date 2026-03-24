@@ -33,20 +33,6 @@ provider "aws" {
   }
 }
 
-# us-east-1 provider — acm_cloudfront 상태 정리 후 제거 가능
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
-
-  default_tags {
-    tags = {
-      Project     = var.project
-      Environment = var.environment
-      ManagedBy   = "terraform"
-    }
-  }
-}
-
 # =============================================================================
 # Module 0: IAM (루트 계정 대신 사용할 사용자/그룹/정책)
 # =============================================================================
@@ -66,13 +52,12 @@ module "iam" {
 # Module 1: VPC
 # =============================================================================
 module "vpc" {
-  source                = "../../modules/vpc"
-  project               = var.project
-  environment           = var.environment
-  vpc_cidr              = var.vpc_cidr
-  az_count              = var.az_count
-  single_nat_gateway    = var.single_nat_gateway
-  bastion_allowed_cidrs = var.bastion_allowed_cidrs
+  source             = "../../modules/vpc"
+  project            = var.project
+  environment        = var.environment
+  vpc_cidr           = var.vpc_cidr
+  az_count           = var.az_count
+  single_nat_gateway = var.single_nat_gateway
 
   tags = local.common_tags
 }
@@ -180,26 +165,6 @@ module "rds" {
 }
 
 # =============================================================================
-# Module 10: EC2 + EIP (Bastion Host)
-# =============================================================================
-module "ec2" {
-  source = "../../modules/ec2"
-
-  project     = var.project
-  environment = var.environment
-
-  create_bastion = false
-
-  public_subnet_id          = module.vpc.public_subnet_ids[0]
-  bastion_security_group_id = module.vpc.bastion_security_group_id
-
-  instance_type  = var.bastion_instance_type
-  ssh_public_key = var.bastion_ssh_public_key
-
-  tags = local.common_tags
-}
-
-# =============================================================================
 # Module 11: CloudTrail
 # =============================================================================
 module "cloudtrail" {
@@ -224,7 +189,7 @@ module "k8s_ec2" {
   project     = var.project
   environment = var.environment
 
-  vpc_id            = module.vpc.vpc_id
+  vpc_id = module.vpc.vpc_id
   # c7i-flex.large는 ap-northeast-2a 미지원 → 2b 서브넷만 전달
   public_subnet_ids = [module.vpc.public_subnet_ids[1]]
 

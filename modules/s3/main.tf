@@ -100,9 +100,9 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
   bucket = aws_s3_bucket.uploads[0].id
 
   block_public_acls       = true
-  block_public_policy     = false  # 버킷 정책으로 공개 읽기 허용
+  block_public_policy     = false # 버킷 정책으로 공개 읽기 허용
   ignore_public_acls      = true
-  restrict_public_buckets = false  # 공개 읽기 정책 허용
+  restrict_public_buckets = false # 공개 읽기 정책 허용
 }
 
 # 업로드 파일 공개 읽기 정책 (이미지는 공개 콘텐츠)
@@ -134,6 +134,16 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
+  }
+}
+
+# 버전 관리: 실수 삭제 시 복구 가능
+resource "aws_s3_bucket_versioning" "uploads" {
+  count  = var.create_uploads_bucket ? 1 : 0
+  bucket = aws_s3_bucket.uploads[0].id
+
+  versioning_configuration {
+    status = "Enabled"
   }
 }
 

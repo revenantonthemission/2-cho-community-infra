@@ -13,6 +13,25 @@ spec:
       labels:
         app: community-api
     spec:
+      # AZ 간 균등 분배: 한쪽 AZ 장애 시에도 서비스 유지
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: community-api
+      # 같은 노드에 API Pod 집중 방지
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: community-api
+                topologyKey: kubernetes.io/hostname
+      serviceAccountName: community-api
       imagePullSecrets:
         - name: ecr-cred
       containers:
@@ -25,9 +44,6 @@ spec:
                 name: community-config
             - secretRef:
                 name: community-secrets
-          volumeMounts:
-            - name: uploads
-              mountPath: /uploads
           resources:
             requests:
               cpu: 250m
@@ -37,17 +53,18 @@ spec:
               memory: 1Gi
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 10
-      volumes:
-        - name: uploads
-          persistentVolumeClaim:
-            claimName: uploads-pvc
+          # 롤링 배포 시 in-flight 요청 완료 대기
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]

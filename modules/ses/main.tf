@@ -38,3 +38,25 @@ resource "aws_route53_record" "dkim" {
   ttl     = 600
   records = ["${aws_ses_domain_dkim.this.dkim_tokens[count.index]}.dkim.amazonses.com"]
 }
+
+# -----------------------------------------------------------------------------
+# SPF (발신 서버 인증 — 스팸 필터 통과에 필수)
+# -----------------------------------------------------------------------------
+resource "aws_route53_record" "spf" {
+  zone_id = var.zone_id
+  name    = var.domain_name
+  type    = "TXT"
+  ttl     = 300
+  records = ["v=spf1 include:amazonses.com ~all"]
+}
+
+# -----------------------------------------------------------------------------
+# DMARC (SPF/DKIM 정책 선언 — iCloud 등 strict 프로바이더 대응)
+# -----------------------------------------------------------------------------
+resource "aws_route53_record" "dmarc" {
+  zone_id = var.zone_id
+  name    = "_dmarc.${var.domain_name}"
+  type    = "TXT"
+  ttl     = 300
+  records = ["v=DMARC1; p=none; rua=mailto:noreply@${var.domain_name}"]
+}

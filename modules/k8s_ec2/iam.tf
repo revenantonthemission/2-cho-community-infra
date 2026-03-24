@@ -74,6 +74,26 @@ resource "aws_iam_role_policy" "k8s_s3_uploads" {
   })
 }
 
+# SES 이메일 발송 권한 (EMAIL_BACKEND=ses일 때 사용)
+resource "aws_iam_role_policy" "k8s_ses_send" {
+  name = "${var.project}-${var.environment}-k8s-ses-send"
+  role = aws_iam_role.k8s_node.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+      Resource = "*"
+      Condition = {
+        StringEquals = {
+          "ses:FromAddress" = "noreply@${var.domain_name}"
+        }
+      }
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "k8s_node" {
   name = "${var.project}-${var.environment}-k8s-node"
   role = aws_iam_role.k8s_node.name

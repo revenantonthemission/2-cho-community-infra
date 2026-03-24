@@ -53,12 +53,6 @@ variable "single_nat_gateway" {
   type        = bool
 }
 
-variable "bastion_allowed_cidrs" {
-  description = "Bastion SSH 허용 CIDR 목록"
-  type        = list(string)
-  default     = []
-}
-
 # =============================================================================
 # S3
 # =============================================================================
@@ -156,21 +150,6 @@ variable "rds_deletion_protection" {
   description = "삭제 보호"
   type        = bool
   default     = false
-}
-
-# =============================================================================
-# EC2 (Bastion)
-# =============================================================================
-variable "bastion_instance_type" {
-  description = "Bastion 인스턴스 타입"
-  type        = string
-  default     = "t3.micro"
-}
-
-variable "bastion_ssh_public_key" {
-  description = "Bastion SSH 공개키"
-  type        = string
-  default     = ""
 }
 
 # =============================================================================

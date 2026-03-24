@@ -57,6 +57,9 @@ locals {
       "repo:${var.github_upstream_owner}/2-cho-community-infra:environment:staging",
     ]
     prod = [
+      "repo:${var.github_fork_owner}/2-cho-community-be:environment:prod",
+      "repo:${var.github_fork_owner}/2-cho-community-fe:environment:prod",
+      "repo:${var.github_fork_owner}/2-cho-community-infra:environment:prod",
       "repo:${var.github_upstream_owner}/2-cho-community-be:environment:prod",
       "repo:${var.github_upstream_owner}/2-cho-community-fe:environment:prod",
       "repo:${var.github_upstream_owner}/2-cho-community-infra:environment:prod",
@@ -97,7 +100,7 @@ resource "aws_iam_role" "github_actions" {
 }
 
 # =============================================================================
-# IAM Policies — 배포 권한 (ECR + Lambda + S3 + CloudFront)
+# IAM Policies — 배포 권한 (ECR + S3)
 # =============================================================================
 resource "aws_iam_role_policy" "github_actions_deploy" {
   for_each = toset(local.environments)
@@ -131,20 +134,6 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
         Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}-${each.key}-*"
       },
       {
-        Sid    = "LambdaUpdate"
-        Effect = "Allow"
-        Action = [
-          "lambda:UpdateFunctionCode",
-          "lambda:GetFunction",
-          "lambda:PublishVersion",
-          "lambda:GetAlias",
-          "lambda:CreateAlias",
-          "lambda:UpdateAlias",
-          "lambda:InvokeFunction"
-        ]
-        Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project}-${each.key}-*"
-      },
-      {
         Sid    = "S3Deploy"
         Effect = "Allow"
         Action = [
@@ -158,15 +147,6 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
           "arn:aws:s3:::${var.project}-${each.key}-frontend/*"
         ]
       },
-      {
-        Sid    = "CloudFrontInvalidation"
-        Effect = "Allow"
-        Action = [
-          "cloudfront:CreateInvalidation",
-          "cloudfront:GetInvalidation"
-        ]
-        Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*"
-      }
     ]
   })
 }
@@ -260,9 +240,9 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         ]
       },
       {
-        Sid    = "S3ListAll"
-        Effect = "Allow"
-        Action = ["s3:ListAllMyBuckets", "s3:GetBucketLocation"]
+        Sid      = "S3ListAll"
+        Effect   = "Allow"
+        Action   = ["s3:ListAllMyBuckets", "s3:GetBucketLocation"]
         Resource = "*"
       },
       {
@@ -282,41 +262,6 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Resource = "*"
       },
       {
-        Sid    = "LambdaManagement"
-        Effect = "Allow"
-        Action = [
-          "lambda:*"
-        ]
-        Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project}-*"
-      },
-      {
-        Sid    = "LambdaGlobal"
-        Effect = "Allow"
-        Action = [
-          "lambda:ListFunctions", "lambda:GetAccountSettings",
-          "lambda:ListEventSourceMappings"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "APIGateway"
-        Effect = "Allow"
-        Action = [
-          "apigateway:*"
-        ]
-        Resource = [
-          "arn:aws:apigateway:${var.aws_region}::*"
-        ]
-      },
-      {
-        Sid    = "CloudFrontManagement"
-        Effect = "Allow"
-        Action = [
-          "cloudfront:*"
-        ]
-        Resource = "*"
-      },
-      {
         Sid    = "ECRManagement"
         Effect = "Allow"
         Action = [
@@ -329,14 +274,6 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Effect = "Allow"
         Action = [
           "ecr:GetAuthorizationToken", "ecr:DescribeRepositories"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "EFSManagement"
-        Effect = "Allow"
-        Action = [
-          "elasticfilesystem:*"
         ]
         Resource = "*"
       },
@@ -443,8 +380,6 @@ resource "aws_iam_role_policy" "github_actions_infra" {
           "logs:DescribeLogGroups", "logs:TagLogGroup", "logs:UntagLogGroup"
         ]
         Resource = [
-          "arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project}-*",
-          "arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project}-*:*",
           "arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:${var.project}-*",
           "arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:${var.project}-*:*"
         ]
@@ -480,9 +415,9 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project}-*"
       },
       {
-        Sid    = "SSMDescribe"
-        Effect = "Allow"
-        Action = ["ssm:DescribeParameters"]
+        Sid      = "SSMDescribe"
+        Effect   = "Allow"
+        Action   = ["ssm:DescribeParameters"]
         Resource = "*"
       },
       {
@@ -499,42 +434,10 @@ resource "aws_iam_role_policy" "github_actions_infra" {
         Resource = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/terraform-locks"
       },
       {
-        Sid    = "DynamoDBList"
-        Effect = "Allow"
-        Action = ["dynamodb:ListTables"]
+        Sid      = "DynamoDBList"
+        Effect   = "Allow"
+        Action   = ["dynamodb:ListTables"]
         Resource = "*"
-      },
-      {
-        Sid    = "EventBridgeManagement"
-        Effect = "Allow"
-        Action = [
-          "events:PutRule", "events:DeleteRule", "events:DescribeRule",
-          "events:EnableRule", "events:DisableRule", "events:ListRules",
-          "events:PutTargets", "events:RemoveTargets", "events:ListTargets*",
-          "events:ListTagsForResource", "events:TagResource", "events:UntagResource",
-          "events:CreateConnection", "events:DeleteConnection",
-          "events:DescribeConnection", "events:UpdateConnection",
-          "events:CreateApiDestination", "events:DeleteApiDestination",
-          "events:DescribeApiDestination", "events:UpdateApiDestination"
-        ]
-        Resource = [
-          "arn:aws:events:*:${data.aws_caller_identity.current.account_id}:rule/${var.project}-*",
-          "arn:aws:events:*:${data.aws_caller_identity.current.account_id}:connection/${var.project}-*",
-          "arn:aws:events:*:${data.aws_caller_identity.current.account_id}:api-destination/${var.project}-*"
-        ]
-      },
-      {
-        Sid    = "EventBridgeSecretsManager"
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:CreateSecret",
-          "secretsmanager:UpdateSecret",
-          "secretsmanager:DeleteSecret",
-          "secretsmanager:DescribeSecret",
-          "secretsmanager:PutSecretValue"
-        ]
-        Resource = "arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:events!connection/${var.project}-*"
       },
       {
         Sid    = "KMSForEncryption"
