@@ -100,9 +100,9 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
   bucket = aws_s3_bucket.uploads[0].id
 
   block_public_acls       = true
-  block_public_policy     = false  # 버킷 정책으로 공개 읽기 허용
+  block_public_policy     = false # 버킷 정책으로 공개 읽기 허용
   ignore_public_acls      = true
-  restrict_public_buckets = false  # 공개 읽기 정책 허용
+  restrict_public_buckets = false # 공개 읽기 정책 허용
 }
 
 # 업로드 파일 공개 읽기 정책 (이미지는 공개 콘텐츠)

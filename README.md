@@ -323,8 +323,8 @@ flowchart TD
 
 | 리소스 | 이름 | 설명 |
 |--------|------|------|
-| Deployment | `community-api` | FastAPI 백엔드 (HPA min 2, max 4 · CPU 70%) |
-| Deployment | `community-ws` | WebSocket 서버 (Redis Pub/Sub · 2 replicas) |
+| Deployment | `community-api` | FastAPI 백엔드 (HPA min 2, max 4 · CPU 70%) · readiness: `/readyz` · liveness: `/livez` · preStop: `sleep 5` |
+| Deployment | `community-ws` | WebSocket 서버 (Redis Pub/Sub · 2 replicas) · readiness+liveness: `/health` |
 | Deployment | `community-fe` | nginx + Vite 빌드 정적 파일 (2 replicas) |
 | PDB | `api-pdb` | minAvailable: 1 (API Pod 중단 방지) |
 | PDB | `fe-pdb` | minAvailable: 1 (Frontend Pod 중단 방지) |

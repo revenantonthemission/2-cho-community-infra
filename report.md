@@ -35,33 +35,36 @@
 | 계층 | 기술 | 선택 근거 | 운영 고려사항 |
 | --- | --- | --- | --- |
 | **프론트엔드** | Vanilla JS MPA (Vite, 26개 페이지) | 프레임워크 없이 JS 기본기 학습 | nginx Pod으로 정적 배포, 2 replica AZ 분산 |
-| **백엔드** | FastAPI (Python 3.13, aiomysql, 104개 API) | 비동기 I/O, 자동 API 문서화 | HPA 자동 스케일링, AZ 간 topology spread |
+| **백엔드** | FastAPI (Python 3.13, aiomysql, 104개 API) · 모듈러 모놀리스 (`modules/` 9개 도메인 + `core/`) | 비동기 I/O, 자동 API 문서화, 도메인 기반 모듈 분리 | HPA 자동 스케일링, AZ 간 topology spread |
 | **데이터베이스** | MySQL 8.0.44 (RDS Multi-AZ, 31개 테이블) | FULLTEXT 검색(ngram), 트랜잭션 격리 | 관리형 자동 페일오버, 14일 백업 보존 |
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, CronJob 주기적 정리 |
-| **인프라** | AWS (Terraform 12개 모듈) + EKS (Prod) / kubeadm (Staging/Dev) | IaC 재현성, 관리형 컨트롤 플레인 (Prod) | Prod: EKS Managed Node Group, Staging: kubeadm 1M+2W, Dev: kubeadm 1M+2W |
-| **CI/CD** | GitHub Actions + OIDC + ArgoCD | 장기 자격 증명 없는 배포, GitOps | ArgoCD App-of-Apps, 자동 sync (dev), 수동 sync (prod), promote.yml (staging→prod 승격) |
+| **인프라** | AWS (Terraform 12개 모듈) + EKS (Prod) / kubeadm (Staging) | IaC 재현성, 관리형 컨트롤 플레인 (Prod) | Prod: EKS Managed Node Group, Staging: kubeadm 1M+2W, Dev: Docker Compose (로컬) |
+| **CI/CD** | GitHub Actions + OIDC + ArgoCD | 장기 자격 증명 없는 배포, GitOps | ArgoCD App-of-Apps, 자동 sync (staging), 수동 sync (prod), promote.yml (staging→prod 승격) |
 | **모니터링** | Prometheus + Grafana + Alertmanager (kube-prometheus-stack) | K8s 네이티브 메트릭 수집 | ServiceMonitor 자동 수집, Alertmanager → Slack 알림 활성화 |
 | **파일 스토리지** | S3 (STORAGE_BACKEND=s3) | 99.999999999% 내구성, AZ 비종속 | PVC 제거로 Pod AZ 분산 제약 해소, 버전 관리 활성화 |
 
 ### 1.3 아키텍처 전환 이력
 
-서비스 출시 이후 두 차례의 아키텍처 전환을 거쳤습니다. 각 전환은 운영 안정성과 학습 목표를 동시에 달성하기 위한 설계 판단이었습니다.
+서비스 출시 이후 세 차례의 아키텍처 전환을 거쳤습니다. 각 전환은 운영 안정성과 학습 목표를 동시에 달성하기 위한 설계 판단이었습니다.
 
 ```mermaid
 flowchart LR
     Phase1["서버리스<br/>Lambda + API GW<br/>+ CloudFront"]
-    Phase2["kubeadm K8s<br/>Dev: 1M+2W<br/>EC2 직접 관리"]
+    Phase2["kubeadm K8s<br/>Staging: 1M+2W<br/>EC2 직접 관리"]
     Phase3["EKS (Prod)<br/>Managed Node Group<br/>+ NLB + Multi-AZ"]
+    Phase4["Docker Compose<br/>Dev: 로컬 환경<br/>BE + FE + MySQL + Redis"]
 
     Phase1 -->|"콜드 스타트 제거<br/>DB 커넥션 안정화"| Phase2
     Phase2 -->|"컨트롤 플레인 관리 위임<br/>Private 서브넷 + NLB"| Phase3
+    Phase2 -->|"Dev 환경 간소화<br/>로컬 개발 전환"| Phase4
 
     style Phase1 fill:#f5f5f5,stroke:#999
     style Phase2 fill:#e3f2fd,stroke:#1565c0
     style Phase3 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style Phase4 fill:#fff3e0,stroke:#e65100
 ```
 
-| 항목 | 서버리스 (Phase 1) | kubeadm (Phase 2, Dev/Staging) | EKS (Phase 3, Prod) |
+| 항목 | 서버리스 (Phase 1) | kubeadm (Phase 2, Staging) | EKS (Phase 3, Prod) |
 | --- | --- | --- | --- |
 | 컨트롤 플레인 | AWS 관리 (Lambda) | 자체 관리 (Master EC2) | **AWS 관리 (EKS)** |
 | Worker 노드 | 없음 (Lambda) | 퍼블릭 서브넷 EC2 | **프라이빗 서브넷 (Managed Node Group)** |
@@ -72,7 +75,10 @@ flowchart LR
 | etcd 관리 | 해당 없음 | **자체 관리 (백업 미설정)** | AWS 관리 (EKS) |
 | 파일 스토리지 | EFS 마운트 | S3 (PVC 제거) | **S3 (PVC 없음, AZ 무관)** |
 | CNI 네트워크 | 해당 없음 | Calico 직접 라우팅 (IPIP 비활성화) | **AWS VPC CNI** |
-| 운영 상태 | 종료 | **Staging 운영 중** (`staging.my-community.shop`) | **Prod 운영 중** (`my-community.shop`) |
+| Dev 환경 | — | — | — |
+| 운영 상태 | 종료 | **운영 중지 (비용 문제)** (`staging.my-community.shop`) | **운영 중지 (비용 문제)** (`my-community.shop`) |
+
+> **Dev 환경**: kubeadm에서 Docker Compose 기반 로컬 환경으로 전환 (BE:8000 + FE:3000 + MySQL:3306 + Redis:6379). K8s 인프라가 불필요하므로 운영 비용 없이 개발·테스트 가능.
 
 ### 1.4 서비스 특성과 인프라 요구사항
 
@@ -96,7 +102,7 @@ flowchart LR
 
 ### 2.1 전체 구성도 (Prod — EKS)
 
-사용자 요청은 Route53 → NLB → Ingress-NGINX를 거쳐 EKS 프라이빗 서브넷의 Pod에 도달합니다. kubeadm 환경(Dev)과 달리, 노드 IP가 인터넷에 노출되지 않으며 NLB가 L4 수준 헬스 체크와 AZ 간 로드밸런싱을 수행합니다.
+사용자 요청은 Route53 → NLB → Ingress-NGINX를 거쳐 EKS 프라이빗 서브넷의 Pod에 도달합니다. kubeadm 환경(Staging)과 달리, 노드 IP가 인터넷에 노출되지 않으며 NLB가 L4 수준 헬스 체크와 AZ 간 로드밸런싱을 수행합니다.
 
 ```mermaid
 flowchart TD
@@ -197,7 +203,7 @@ flowchart TD
 
 ### 2.2 네트워크 토폴로지 (Prod)
 
-EKS Prod 환경에서 Worker 노드는 프라이빗 서브넷에 배치됩니다. kubeadm Dev 환경과 달리 노드가 인터넷에 직접 노출되지 않으며, NLB가 퍼블릭 서브넷에서 트래픽을 수신하여 프라이빗 서브넷의 Ingress-NGINX로 전달합니다.
+EKS Prod 환경에서 Worker 노드는 프라이빗 서브넷에 배치됩니다. kubeadm Staging 환경과 달리 노드가 인터넷에 직접 노출되지 않으며, NLB가 퍼블릭 서브넷에서 트래픽을 수신하여 프라이빗 서브넷의 Ingress-NGINX로 전달합니다.
 
 ```mermaid
 flowchart TD
@@ -248,9 +254,9 @@ flowchart TD
     style PrivB fill:#e8f5e9,stroke:#2e7d32
 ```
 
-#### kubeadm(Dev) vs EKS(Prod) 네트워크 설계 비교
+#### kubeadm(Staging) vs EKS(Prod) 네트워크 설계 비교
 
-| 항목 | kubeadm (Dev) | EKS (Prod) | 변경 근거 |
+| 항목 | kubeadm (Staging) | EKS (Prod) | 변경 근거 |
 | --- | --- | --- | --- |
 | Worker 서브넷 | 퍼블릭 (노드 IP 노출) | **프라이빗** (인터넷 비노출) | 보안 강화: 공격 표면 최소화 |
 | 트래픽 진입 | hostNetwork DaemonSet (노드 IP 직접) | **NLB → Ingress-NGINX** | AWS 관리형 HA, 헬스 체크 자동화 |
@@ -279,7 +285,7 @@ flowchart LR
 
 #### Calico CNI 네트워크 설계 (kubeadm 환경)
 
-kubeadm 환경(Dev/Staging)에서는 Calico를 CNI로 사용합니다. 초기에는 `ipipMode: Always`로 설정했으나, **AWS VPC가 IPIP 프로토콜(IP Protocol 4)을 차단**하여 cross-node Pod 간 통신이 실패하는 문제가 발생했습니다.
+kubeadm 환경(Staging)에서는 Calico를 CNI로 사용합니다. 초기에는 `ipipMode: Always`로 설정했으나, **AWS VPC가 IPIP 프로토콜(IP Protocol 4)을 차단**하여 cross-node Pod 간 통신이 실패하는 문제가 발생했습니다.
 
 **설계 결정**: `ipipMode: Always` → `ipipMode: Never`로 전환하여 직접 라우팅(Direct Routing)을 사용합니다.
 
@@ -298,9 +304,9 @@ NetworkPolicy에서 hostNetwork Ingress 트래픽을 허용하기 위해 `ipBloc
 
 | 항목 | 변경 전 | 변경 후 | 근거 |
 | --- | --- | --- | --- |
-| ipBlock CIDR | `10.0.0.0/16` | **`10.0.0.0/8`** | 멀티 VPC 호환 (Dev: `10.1.0.0/16`, Staging: `10.3.0.0/16`, Prod: `10.2.0.0/16`) |
+| ipBlock CIDR | `10.0.0.0/16` | **`10.0.0.0/8`** | 멀티 VPC 호환 (Staging: `10.3.0.0/16`, Prod: `10.2.0.0/16`) |
 
-`10.0.0.0/8`은 RFC 1918 사설 네트워크 범위로, 모든 환경의 VPC CIDR을 포괄합니다. 환경별로 NetworkPolicy를 별도 관리할 필요 없이 단일 base 매니페스트로 통일할 수 있습니다.
+`10.0.0.0/8`은 RFC 1918 사설 네트워크 범위로, 모든 K8s 환경의 VPC CIDR을 포괄합니다. 환경별로 NetworkPolicy를 별도 관리할 필요 없이 단일 base 매니페스트로 통일할 수 있습니다.
 
 ### 2.3 Pod 토폴로지 설계
 
@@ -345,11 +351,11 @@ flowchart TD
 
 #### 현재 Pod 배치 상태
 
-| Deployment | Replicas | Topology Spread | Anti-Affinity | PDB | 실제 AZ 분포 |
-| --- | --- | --- | --- | --- | --- |
-| **community-api** | 2 (HPA 2~4) | `DoNotSchedule` (zone) | Preferred (hostname) | minAvailable: 1 | **AZ 2a + 2b** |
-| **community-fe** | 2 | `DoNotSchedule` (zone) | Preferred (hostname) | minAvailable: 1 | **AZ 2a + 2b** |
-| **community-ws** | 2 | `DoNotSchedule` (zone) | Preferred (hostname) | minAvailable: 1 | AZ 2b (soft preference) |
+| Deployment | Replicas | Topology Spread | Anti-Affinity | PDB | Probes | 실제 AZ 분포 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **community-api** | 2 (HPA 2~4) | `DoNotSchedule` (zone) | Preferred (hostname) | minAvailable: 1 | readiness: `/readyz` · liveness: `/livez` · preStop: `sleep 5` | **AZ 2a + 2b** |
+| **community-fe** | 2 | `DoNotSchedule` (zone) | Preferred (hostname) | minAvailable: 1 | readiness: `/` | **AZ 2a + 2b** |
+| **community-ws** | 2 | `DoNotSchedule` (zone) | Preferred (hostname) | minAvailable: 1 | readiness+liveness: `/health` | AZ 2b (soft preference) |
 | **redis** | 3 (Sentinel HA) | — | — | — | 1 Master + 2 Replica + 3 Sentinel |
 
 **WS Pod의 AZ 편중**: WS의 TopologySpread는 `DoNotSchedule`이지만, 현재 2 replica이므로 maxSkew=1을 충족하면 양쪽 AZ에 분배됩니다. 다만 노드 리소스 상황에 따라 한쪽에 집중될 수 있습니다. API/FE와 달리 WS는 WebSocket 연결 상태를 Redis Pub/Sub로 공유하므로, AZ 편중의 영향은 제한적입니다.
@@ -395,7 +401,7 @@ flowchart LR
     subgraph GitOps["GitOps 배포"]
         TagCommit["kustomize edit set image<br/>newTag: sha-XXXX"]
         Webhook["GitHub Webhook<br/>→ ArgoCD"]
-        ArgoCDDeploy["ArgoCD<br/>자동 sync (dev)<br/>수동 sync (prod)"]
+        ArgoCDDeploy["ArgoCD<br/>자동 sync (staging)<br/>수동 sync (prod)"]
     end
 
     BE --> OIDC
@@ -414,7 +420,7 @@ flowchart LR
 
 - **OIDC 인증**: 장기 자격 증명(AWS Access Key) 없이 임시 토큰으로 AWS 인증. 자격 증명 유출 위험을 제거합니다.
 - **GitOps (ArgoCD)**: Git을 단일 진실 공급원(Single Source of Truth)으로 사용. 배포 이력이 Git 커밋으로 자동 기록되며, `git revert`로 즉시 롤백이 가능합니다.
-- **App-of-Apps 패턴**: root-app이 환경별 Application CRD를 관리. dev는 자동 sync, prod는 수동 sync로 배포 안전성을 확보합니다.
+- **App-of-Apps 패턴**: root-app이 환경별 Application CRD를 관리. staging은 자동 sync, prod는 수동 sync로 배포 안전성을 확보합니다.
 - **Prod sync 수동 제한 이유**: 자동 sync는 Git push 즉시 프로덕션에 반영되므로, 검증되지 않은 변경이 즉시 서비스에 영향을 줄 위험이 있습니다.
 
 ### 2.6 Staging → Prod 프로모션 프로세스
@@ -471,11 +477,12 @@ flowchart TD
 
 | 항목 | Dev | Staging | Prod |
 | --- | --- | --- | --- |
-| **배포 트리거** | `deploy-k8s.yml` (push) | `promote.yml` (1단계) | `promote.yml` (4단계) |
-| **ArgoCD sync** | 자동 | 자동 | 수동 |
-| **승인 게이트** | 없음 | 없음 | **Required Reviewers** |
-| **스모크 테스트** | 있음 | 있음 | 있음 |
-| **이미지 출처** | 직접 빌드 | 직접 빌드 | **Staging에서 검증된 동일 SHA 복사** |
+| **환경 유형** | Docker Compose (로컬) | kubeadm K8s | EKS |
+| **배포 트리거** | `docker-compose up` | `promote.yml` (1단계) | `promote.yml` (4단계) |
+| **ArgoCD sync** | — | 자동 | 수동 |
+| **승인 게이트** | — | 없음 | **Required Reviewers** |
+| **스모크 테스트** | — | 있음 | 있음 |
+| **이미지 출처** | 로컬 빌드 | 직접 빌드 | **Staging에서 검증된 동일 SHA 복사** |
 
 ---
 
@@ -531,19 +538,19 @@ flowchart TD
 
 #### 3.2.2 RDS 단일 인스턴스 병목
 
-| 지표 | Dev | Staging | Prod | 한계 |
+| 지표 | Dev (Docker Compose) | Staging | Prod | 한계 |
 | --- | --- | --- | --- | --- |
-| 인스턴스 | db.t3.micro | db.t3.micro | db.t3.medium | vCPU 2, RAM 4GB |
-| 최대 커넥션 (추정) | ~60 | ~60 | ~120 | `max_connections` = RAM 의존 |
-| 스토리지 (gp3) | 20 GB 고정 | 20~100 GB | 50~200 GB | 자동 확장 |
-| IOPS (gp3 기본) | 3,000 | 3,000 | 3,000 | 프로비저닝 가능 |
-| Multi-AZ | 비활성화 | 비활성화 | **활성화** | 자동 페일오버 |
+| 인스턴스 | 로컬 MySQL 컨테이너 | db.t3.micro | db.t3.medium | vCPU 2, RAM 4GB |
+| 최대 커넥션 (추정) | 로컬 제한 없음 | ~60 | ~120 | `max_connections` = RAM 의존 |
+| 스토리지 (gp3) | 로컬 볼륨 | 20~100 GB | 50~200 GB | 자동 확장 |
+| IOPS (gp3 기본) | — | 3,000 | 3,000 | 프로비저닝 가능 |
+| Multi-AZ | — | 비활성화 | **활성화** | 자동 페일오버 |
 
 **K8s의 DB 커넥션 관리 장점**: Lambda 환경에서는 인스턴스마다 독립적인 커넥션 풀을 생성하여 폭발 위험이 있었습니다. EKS에서는 HPA로 Pod 수가 제어되므로 커넥션 수를 예측할 수 있습니다.
 
 ```text
-EKS Pod 수 × 풀 크기 = 예측 가능한 DB 커넥션 수
-    4     ×   10 (기본) =     40 (RDS t3.medium 한도 ~120의 33%)
+EKS Pod 수 × 풀 크기     =  예측 가능한 DB 커넥션 수
+    4     ×   10 (기본) =          40 (RDS t3.medium 한도 ~120의 33%)
 ```
 
 **Stage 2 이상 병목**: 읽기 요청이 80%를 차지하므로, 단일 RDS 인스턴스의 CPU가 FULLTEXT 검색(ngram)과 대량 SELECT로 포화됩니다. Read Replica 도입 시점입니다.
@@ -654,7 +661,7 @@ flowchart TD
 
 **AZ 장애 대응 비교 (kubeadm vs EKS)**:
 
-| 항목 | kubeadm (Dev, 단일 AZ) | EKS (Prod, 멀티 AZ) |
+| 항목 | kubeadm (Staging, 단일 AZ) | EKS (Prod, 멀티 AZ) |
 | --- | --- | --- |
 | K8s 컨트롤 플레인 | **전면 중단** (Master도 같은 AZ) | **정상** (AWS 관리, 멀티 AZ) |
 | App Pod | 전면 중단 | **50% 용량으로 서비스 유지** |
@@ -778,27 +785,29 @@ flowchart TD
 
 ### 4.1 현재 HA 구현 현황 (환경별)
 
-| 항목 | Dev (kubeadm) | Staging (kubeadm) | Prod (EKS) |
-| --- | --- | --- | --- |
-| **컨트롤 플레인** | 단일 Master (자체 관리) | 단일 Master (자체 관리) | **AWS 관리 (멀티 AZ, 자동 복구)** |
-| **Worker 노드** | 2대 (퍼블릭, 단일 AZ) | 2대 (퍼블릭, 단일 AZ) | **2대 (프라이빗, 멀티 AZ 2a+2b)** |
-| **트래픽 진입** | hostNetwork DaemonSet | hostNetwork DaemonSet | **NLB (멀티 AZ, AWS 관리형 HA)** |
-| **CNI** | Calico 직접 라우팅 | Calico 직접 라우팅 | **AWS VPC CNI** |
-| **API Pod** | HPA 2~4, 단일 AZ | HPA 2~4, 단일 AZ | **HPA 2~4, AZ 분산 (TopologySpread)** |
-| **FE Pod** | 1 replica | 1 replica | **2 replica, AZ 분산** |
-| **WS Pod** | 1 replica | 1 replica | **2 replica, Anti-Affinity** |
-| **PDB** | 미설정 | 미설정 | **3개 (API, FE, WS — minAvailable: 1)** |
-| **NAT Gateway** | 1개 | 1개 | **2개 (AZ당 1개)** |
-| **RDS** | db.t3.micro, 단일 AZ | db.t3.micro, 단일 AZ | **db.t3.medium, Multi-AZ, 14일 백업** |
-| **RDS 삭제 보호** | 비활성화 | 비활성화 | **활성화** |
-| **etcd 관리** | 자체 관리 **(백업 미설정)** | 자체 관리 **(백업 미설정)** | **AWS 관리 (자동)** |
-| **파일 스토리지** | S3 (PVC 제거) | S3 (PVC 제거) | **S3 (PVC 없음)** |
-| **모니터링** | Prometheus + Grafana | Prometheus + Grafana | **Prometheus + Grafana + Alertmanager (Slack 알림)** |
-| **ArgoCD sync** | 자동 | 자동 | **수동** |
-| **프로모션** | — | **promote.yml 1단계 (자동)** | **promote.yml 4단계 (승인 후)** |
-| **CloudTrail 보존** | 30일 | 30일 | **90일** |
-| **ECR 이미지 보존** | 3개 | 3개 | **20개** |
-| **도메인** | dev.my-community.shop | **staging.my-community.shop** | **my-community.shop** |
+> **Dev 환경**: Docker Compose 기반 로컬 개발 환경 (BE:8000 + FE:3000 + MySQL:3306 + Redis:6379). HA 구성 해당 없음.
+
+| 항목 | Staging (kubeadm) | Prod (EKS) |
+| --- | --- | --- |
+| **컨트롤 플레인** | 단일 Master (자체 관리) | **AWS 관리 (멀티 AZ, 자동 복구)** |
+| **Worker 노드** | 2대 (퍼블릭, 단일 AZ) | **2대 (프라이빗, 멀티 AZ 2a+2b)** |
+| **트래픽 진입** | hostNetwork DaemonSet | **NLB (멀티 AZ, AWS 관리형 HA)** |
+| **CNI** | Calico 직접 라우팅 | **AWS VPC CNI** |
+| **API Pod** | HPA 2~4, 단일 AZ | **HPA 2~4, AZ 분산 (TopologySpread)** |
+| **FE Pod** | 1 replica | **2 replica, AZ 분산** |
+| **WS Pod** | 1 replica | **2 replica, Anti-Affinity** |
+| **PDB** | 미설정 | **3개 (API, FE, WS — minAvailable: 1)** |
+| **NAT Gateway** | 1개 | **2개 (AZ당 1개)** |
+| **RDS** | db.t3.micro, 단일 AZ | **db.t3.medium, Multi-AZ, 14일 백업** |
+| **RDS 삭제 보호** | 비활성화 | **활성화** |
+| **etcd 관리** | 자체 관리 **(백업 미설정)** | **AWS 관리 (자동)** |
+| **파일 스토리지** | S3 (PVC 제거) | **S3 (PVC 없음)** |
+| **모니터링** | Prometheus + Grafana | **Prometheus + Grafana + Alertmanager (Slack 알림)** |
+| **ArgoCD sync** | 자동 | **수동** |
+| **프로모션** | **promote.yml 1단계 (자동)** | **promote.yml 4단계 (승인 후)** |
+| **CloudTrail 보존** | 30일 | **90일** |
+| **ECR 이미지 보존** | 3개 | **20개** |
+| **도메인** | staging.my-community.shop | **my-community.shop** |
 
 ### 4.2 AZ 분산 전략 — 설계 결정의 연쇄 관계
 
@@ -892,6 +901,7 @@ flowchart TD
     end
 
     subgraph Gaps["⚠ 미비 사항"]
+        Prom_EmptyDir["Prometheus emptyDir<br/>Pod 재시작 시 메트릭 손실"]
         No_CrossRegion["크로스리전 DR 없음"]
     end
 
@@ -906,7 +916,7 @@ flowchart TD
 | 데이터 | 백업 방식 | RPO | 보존 기간 | 위치 |
 | --- | --- | --- | --- | --- |
 | **RDS (Prod)** | AWS 자동 백업 + Multi-AZ 동기 복제 | ~0 | 14일 | AWS 관리 |
-| **RDS (Dev)** | AWS 자동 백업 | 최대 24시간 | 1일 | AWS 관리 |
+| **RDS (Staging)** | AWS 자동 백업 | 최대 24시간 | 1일 | AWS 관리 |
 | **사용자 업로드** | S3 직접 저장 (실시간) + 버전 관리 활성화 | 0 (실수 삭제 시 이전 버전 복구 가능) | 무기한 | S3 |
 | **Terraform State** | S3 버전 관리 + DynamoDB 잠금 | 0 | 무기한 | S3 |
 | **CloudTrail 로그** | AWS 자동 수집 (멀티리전) | 0 | 90일 (Prod) | S3 |
@@ -919,7 +929,8 @@ flowchart TD
 
 | 장애 유형 | RPO | RTO | 복구 메커니즘 | 자동/수동 |
 | --- | --- | --- | --- | --- |
-| **Pod crash** | 0 | ~30초 | K8s 자동 재시작 (liveness probe) | 자동 |
+| **Pod crash** | 0 | ~30초 | K8s 자동 재시작 (liveness: `/livez`, DB 무관) | 자동 |
+| **DB 일시 장애** | 0 | 0초 | readiness(`/readyz`) 실패 → Service에서 제거, Pod 재시작 없음. DB 복구 시 자동 복귀 | 자동 |
 | **단일 노드 장애** | 0 | **0초** | 다른 AZ Pod가 즉시 처리 | 자동 |
 | **RDS Primary 장애** | ~0 | 60~120초 | Multi-AZ 자동 페일오버 | 자동 |
 | **단일 AZ 장애** | ~0 | 0~2분 | 다른 AZ Pod + RDS 페일오버 | 자동 |
@@ -1055,14 +1066,17 @@ flowchart TD
 | **PDB 보호** | 3개 Deployment에 PDB 적용, 유지보수 시 최소 가용성 보장 |
 | **Redis Sentinel HA** | Master 장애 시 Sentinel 자동 failover (~10초), WS/Rate Limiter 연속성 확보 |
 | **Secret 자동 관리** | AWS Secrets Manager 이력 관리 + ESO 자동 동기화, 수동 kubectl 작업 제거 |
-| **Calico 직접 라우팅** | AWS VPC IPIP 차단 문제 해결, 오버헤드 없는 Pod 간 통신 (kubeadm 환경) |
+| **Calico 직접 라우팅** | AWS VPC IPIP 차단 문제 해결, 오버헤드 없는 Pod 간 통신 (kubeadm Staging 환경) |
 | **부하 테스트 검증 완료** | Locust 100명 동시 접속 테스트에서 읽기/쓰기 API 에러율 0%, P95 100ms 달성. HPA 2→4 스케일링, RDS 커넥션 풀 33% 사용률 확인 |
 
 ### 5.2 현재 아키텍처의 약점과 위험도
 
 | 약점 | 영향 | 위험 시점 | 심각도 |
 | --- | --- | --- | --- |
+| **Prometheus emptyDir (Prod)** | Pod 재시작 시 메트릭 데이터 전체 손실 | Pod 재시작 시 | Medium |
+| **Staging etcd 백업 미설정** | Staging Master 장애 시 클러스터 상태 복구 불가 | Master 장애 시 | Low |
 | **크로스리전 DR 없음** | 서울 리전 장애 시 전면 중단 | 리전 장애 시 | Low |
+| **Staging/Prod 운영 중지** | 비용 문제로 전체 K8s 환경 중지 상태, 재기동 시 검증 필요 | 서비스 재개 시 | Low |
 
 ### 5.3 개선 로드맵
 
@@ -1085,4 +1099,4 @@ flowchart TD
 
 ---
 
-> **요약**: kubeadm → EKS 전환과 Pod 토폴로지 재설계를 통해, 단일 노드 장애 시 RTO를 2~5분에서 **0초**로 단축했습니다. PVC 제거 → S3 전환 → TopologySpread 적용 → PDB 추가의 연쇄적 설계 결정이 이 결과를 만들었습니다. **Locust 부하 테스트(100명 동시 접속, 5분)에서 읽기·쓰기 API 에러율 0%, P95 100ms, P99 610ms를 달성**하여 아키텍처의 안정성을 실측으로 검증했습니다. HPA가 CPU 70%에서 정확히 2→4 Pod로 확장되었고, RDS 커넥션 풀은 33% 사용률로 Stage 2(500명)까지 여유가 있음을 확인했습니다. RDS Multi-AZ(RPO ~0, RTO 60~120초), NLB 멀티 AZ, NAT GW per AZ로 모든 계층에서 AZ 수준 장애 내성을 확보했습니다. Staging 환경이 kubeadm 1M+2W로 운영 중이며(`staging.my-community.shop`), `promote.yml` 워크플로우로 Staging에서 검증된 동일 이미지 SHA를 GitHub Environment 승인 게이트를 거쳐 Prod로 승격하는 프로모션 프로세스를 구축했습니다. kubeadm 환경에서는 Calico IPIP → 직접 라우팅 전환으로 AWS VPC의 IPIP 프로토콜 차단 문제를 해결하고, NetworkPolicy ipBlock을 `10.0.0.0/8`로 확장하여 멀티 VPC 호환성을 확보했습니다. **다음 개선 과제는 "중기 — Stage 2" 항목인 RDS Read Replica(읽기 부하 80% 분산)와 CDN 도입(정적 파일 응답 속도 개선)**입니다.
+> **요약**: kubeadm → EKS 전환과 Pod 토폴로지 재설계를 통해, 단일 노드 장애 시 RTO를 2~5분에서 **0초**로 단축했습니다. PVC 제거 → S3 전환 → TopologySpread 적용 → PDB 추가의 연쇄적 설계 결정이 이 결과를 만들었습니다. **Locust 부하 테스트(100명 동시 접속, 5분)에서 읽기·쓰기 API 에러율 0%, P95 100ms, P99 610ms를 달성**하여 아키텍처의 안정성을 실측으로 검증했습니다. HPA가 CPU 70%에서 정확히 2→4 Pod로 확장되었고, RDS 커넥션 풀은 33% 사용률로 Stage 2(500명)까지 여유가 있음을 확인했습니다. RDS Multi-AZ(RPO ~0, RTO 60~120초), NLB 멀티 AZ, NAT GW per AZ로 모든 계층에서 AZ 수준 장애 내성을 확보했습니다. Staging 환경은 kubeadm 1M+2W(`staging.my-community.shop`), Prod 환경은 EKS(`my-community.shop`)로 구축되었으며, 현재 비용 문제로 운영 중지 상태입니다. Dev 환경은 Docker Compose 기반 로컬 환경으로 전환되었습니다. `promote.yml` 워크플로우로 Staging에서 검증된 동일 이미지 SHA를 GitHub Environment 승인 게이트를 거쳐 Prod로 승격하는 프로모션 프로세스를 구축했습니다. kubeadm Staging 환경에서는 Calico IPIP → 직접 라우팅 전환으로 AWS VPC의 IPIP 프로토콜 차단 문제를 해결하고, NetworkPolicy ipBlock을 `10.0.0.0/8`로 확장하여 멀티 VPC 호환성을 확보했습니다. **다음 개선 과제는 Prometheus 영속 스토리지 전환(EBS CSI + gp2 StorageClass)과 "중기 — Stage 2" 항목인 RDS Read Replica(읽기 부하 80% 분산), CDN 도입(정적 파일 응답 속도 개선)**입니다.
