@@ -53,13 +53,18 @@ spec:
               memory: 1Gi
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 10
+          # 롤링 배포 시 in-flight 요청 완료 대기
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
