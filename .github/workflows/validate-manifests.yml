@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        overlay: [dev, staging, prod]
+        overlay: [staging, prod]
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: [dev, staging, prod]
+        env: [staging, prod]
     steps:
       - uses: actions/checkout@v4
 

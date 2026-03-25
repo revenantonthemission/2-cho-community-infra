@@ -1,14 +1,14 @@
 ###############################################################################
 # Infra CI/CD — Terraform Plan (PR) / Plan or Apply (workflow_dispatch)
 #
-# PR 트리거:   dev/staging/prod 3환경 병렬 plan → PR 코멘트
+# PR 트리거:   staging/prod 2환경 병렬 plan → PR 코멘트
 # 수동 트리거: 선택한 환경에 plan 또는 apply 실행
 #
 # 사전 설정:
 #   - Repository variable: AWS_ACCOUNT_ID
-#   - Environment secrets (dev/staging/prod 각각):
+#   - Environment secrets (staging/prod 각각):
 #     DB_USERNAME, DB_PASSWORD, SECRET_KEY
-#   - GitHub Environments: dev, staging, prod
+#   - GitHub Environments: staging, prod
 #   - Bootstrap에서 OIDC provider + IAM role 생성 완료
 ###############################################################################
 
@@ -29,7 +29,6 @@ on:
         required: true
         type: choice
         options:
-          - dev
           - staging
           - prod
       action:
@@ -44,7 +43,7 @@ on:
 permissions: {}
 
 ###############################################################################
-# Job 1: PR — 3환경 병렬 plan (matrix)
+# Job 1: PR — 2환경 병렬 plan (matrix)
 ###############################################################################
 jobs:
   plan-matrix:
@@ -55,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [dev, staging, prod]
+        environment: [staging, prod]
 
     environment: ${{ matrix.environment }}
 
