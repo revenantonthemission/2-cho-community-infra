@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: app
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  template:
+    spec:
+      serviceAccountName: community-api
+      imagePullSecrets:
+        - name: ecr-cred
+      containers:
+        - name: migrate
+          image: community-backend:latest
+          command: ["uv", "run", "alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: community-config
+            - secretRef:
+                name: community-secrets
+      restartPolicy: Never
+  backoffLimit: 3

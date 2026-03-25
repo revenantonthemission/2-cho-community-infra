@@ -24,3 +24,4 @@ resources:
   - app/cronjob-feed-recompute.yaml
   - app/cronjob-token-cleanup.yaml
   - app/cronjob-email-digest.yaml
+  - app/job-db-migrate.yaml
