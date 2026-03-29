@@ -34,155 +34,56 @@ provider "aws" {
 }
 
 # =============================================================================
-# Module 0: IAM (루트 계정 대신 사용할 사용자/그룹/정책)
+# Stack (공통 인프라: IAM + VPC + S3 + Route53 + ACM + SES + ECR + RDS + CloudTrail)
 # =============================================================================
-module "iam" {
-  source = "../../modules/iam"
+module "stack" {
+  source = "../../modules/stack"
 
   project     = var.project
   environment = var.environment
+  tags        = local.common_tags
 
+  # IAM
   admin_username       = var.admin_username
   create_deployer_role = var.create_deployer_role
 
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 1: VPC
-# =============================================================================
-module "vpc" {
-  source = "../../modules/vpc"
-
-  project     = var.project
-  environment = var.environment
-  vpc_cidr    = var.vpc_cidr
-  az_count    = var.az_count
-
+  # VPC
+  vpc_cidr           = var.vpc_cidr
+  az_count           = var.az_count
   single_nat_gateway = var.single_nat_gateway
 
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 2: S3 (uploads + CloudTrail logs)
-# =============================================================================
-module "s3" {
-  source = "../../modules/s3"
-
-  project     = var.project
-  environment = var.environment
-
+  # S3
   cloudtrail_log_retention_days = var.cloudtrail_log_retention_days
+  create_uploads_bucket         = true
+  uploads_cors_origins          = ["https://my-community.shop"]
 
-  # 업로드 S3 버킷 (K8s 환경에서 사용)
-  create_uploads_bucket = true
-  uploads_cors_origins  = ["https://my-community.shop"]
+  # Route53 + ACM
+  domain_name                   = var.domain_name
+  api_domain_name               = var.api_domain_name
+  acm_subject_alternative_names = [var.domain_name, "ws.${var.domain_name}"]
 
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 3: Route 53 + ACM
-# =============================================================================
-module "route53" {
-  source = "../../modules/route53"
-
-  domain_name = var.domain_name
-}
-
-module "acm" {
-  source = "../../modules/acm"
-
-  project     = var.project
-  environment = var.environment
-
-  domain_name               = var.api_domain_name
-  subject_alternative_names = [var.domain_name, "ws.${var.domain_name}"]
-  zone_id                   = module.route53.zone_id
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 3.5: SES (이메일 발송)
-# =============================================================================
-module "ses" {
-  source = "../../modules/ses"
-
-  project     = var.project
-  environment = var.environment
-
-  domain_name = var.domain_name
-  zone_id     = module.route53.zone_id
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 4: ECR
-# =============================================================================
-module "ecr" {
-  source = "../../modules/ecr"
-
-  project     = var.project
-  environment = var.environment
-
-  image_retention_count = var.ecr_image_retention_count
-
-  additional_repositories = [
+  # ECR
+  ecr_image_retention_count = var.ecr_image_retention_count
+  ecr_additional_repositories = [
     "${var.project}-${var.environment}-backend-k8s",
     "${var.project}-${var.environment}-frontend-k8s",
   ]
 
-  tags = local.common_tags
+  # RDS
+  rds_engine_version        = var.rds_engine_version
+  rds_instance_class        = var.rds_instance_class
+  rds_allocated_storage     = var.rds_allocated_storage
+  rds_max_allocated_storage = var.rds_max_allocated_storage
+  db_name                   = var.db_name
+  db_username               = var.db_username
+  db_password               = var.db_password
+  rds_multi_az              = var.rds_multi_az
+  rds_backup_retention_days = var.rds_backup_retention_days
+  rds_deletion_protection   = var.rds_deletion_protection
 }
 
 # =============================================================================
-# Module 5: RDS
-# =============================================================================
-module "rds" {
-  source = "../../modules/rds"
-
-  project     = var.project
-  environment = var.environment
-
-  private_subnet_ids    = module.vpc.private_subnet_ids
-  rds_security_group_id = module.vpc.rds_security_group_id
-
-  engine_version        = var.rds_engine_version
-  instance_class        = var.rds_instance_class
-  allocated_storage     = var.rds_allocated_storage
-  max_allocated_storage = var.rds_max_allocated_storage
-
-  db_name     = var.db_name
-  db_username = var.db_username
-  db_password = var.db_password
-
-  multi_az              = var.rds_multi_az
-  backup_retention_days = var.rds_backup_retention_days
-  deletion_protection   = var.rds_deletion_protection
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 11: CloudTrail
-# =============================================================================
-module "cloudtrail" {
-  source = "../../modules/cloudtrail"
-
-  project     = var.project
-  environment = var.environment
-
-  cloudtrail_s3_bucket_id = module.s3.cloudtrail_logs_bucket_id
-  log_retention_days      = var.cloudtrail_log_retention_days
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# EKS Cluster (Managed Node Group)
+# EKS Cluster (Managed Node Group) — prod 전용
 # =============================================================================
 module "eks" {
   source = "../../modules/eks"
@@ -191,8 +92,8 @@ module "eks" {
   project     = var.project
   environment = var.environment
 
-  vpc_id             = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
+  vpc_id             = module.stack.vpc_id
+  private_subnet_ids = module.stack.private_subnet_ids
 
   cluster_version     = var.eks_cluster_version
   node_instance_types = var.eks_node_instance_types
@@ -201,7 +102,7 @@ module "eks" {
   node_max_size       = var.eks_node_max_size
 
   enable_s3_uploads     = true
-  s3_uploads_bucket_arn = module.s3.uploads_bucket_arn
+  s3_uploads_bucket_arn = module.stack.uploads_bucket_arn
 
   tags = local.common_tags
 }
@@ -214,14 +115,13 @@ resource "aws_security_group_rule" "rds_from_eks" {
   from_port                = 3306
   to_port                  = 3306
   protocol                 = "tcp"
-  security_group_id        = module.vpc.rds_security_group_id
+  security_group_id        = module.stack.rds_security_group_id
   source_security_group_id = module.eks[0].cluster_security_group_id
   description              = "EKS nodes to RDS MySQL"
 }
 
 # =============================================================================
 # Secrets Manager (External Secrets Operator 연동용)
-# K8s community-secrets의 값을 Secrets Manager에서 관리
 # =============================================================================
 resource "aws_secretsmanager_secret" "community" {
   count = var.create_eks_cluster ? 1 : 0
@@ -232,8 +132,6 @@ resource "aws_secretsmanager_secret" "community" {
   tags = local.common_tags
 }
 
-# 초기 값은 빈 JSON — 실제 값은 AWS 콘솔 또는 CLI로 설정
-# ESO가 이 secret을 읽어 K8s Secret으로 동기화
 resource "aws_secretsmanager_secret_version" "community" {
   count = var.create_eks_cluster ? 1 : 0
 
@@ -246,7 +144,6 @@ resource "aws_secretsmanager_secret_version" "community" {
     INTERNAL_API_KEY     = ""
   })
 
-  # 초기 생성 후 AWS 콘솔/CLI에서 값을 업데이트하므로 이후 변경 무시
   lifecycle {
     ignore_changes = [secret_string]
   }

@@ -2,15 +2,16 @@
 
 커뮤니티 포럼 **"Camp Linux"**의 AWS 인프라를 Terraform으로 관리하는 저장소입니다.
 
-12개의 활성 Terraform 모듈 + 1개 부트스트랩으로 구성되며, 3개 환경(dev/staging/prod)을 지원합니다. **Prod는 EKS (Managed Node Group)**, **Dev/Staging은 kubeadm 기반 K8s 클러스터**로 운영합니다. Prod 환경은 NLB + Ingress-NGINX를 통해 트래픽을 라우팅하며, PodDisruptionBudget·TopologySpreadConstraints·PodAntiAffinity로 고가용성을 확보합니다.
+13개의 활성 Terraform 모듈(Composition module `stack` 포함) + 1개 부트스트랩으로 구성되며, 2개 클라우드 환경(staging/prod)을 지원합니다. **Prod는 EKS (Managed Node Group)**, **Staging은 kubeadm 기반 K8s 클러스터**로 운영합니다. Dev 환경은 로컬 docker-compose로 전환되었습니다. Prod 환경은 NLB + Ingress-NGINX를 통해 트래픽을 라우팅하며, PodDisruptionBudget·TopologySpreadConstraints·PodAntiAffinity로 고가용성을 확보합니다.
 
 ## 목표 (Goals)
 
 - Prod: EKS Managed Node Group으로 백엔드(FastAPI), 프론트엔드(nginx), WebSocket을 컨테이너로 운영한다.
-- Dev/Staging: kubeadm K8s 클러스터로 동일 워크로드를 운영한다.
+- Staging: kubeadm K8s 클러스터로 동일 워크로드를 운영한다.
+- Dev: 로컬 docker-compose로 운영한다 (클라우드 인프라 없음).
 - MySQL(RDS)을 프라이빗 서브넷에 격리하고 K8s 노드에서만 접근한다.
 - 파일 업로드를 S3에 저장한다 (IRSA/IAM 역할 기반 인증).
-- 환경별(dev/staging/prod) 리소스 규모를 차등 적용하여 비용을 최적화한다.
+- 환경별(staging/prod) 리소스 규모를 차등 적용하여 비용을 최적화한다.
 - Prometheus + Grafana로 클러스터 모니터링하고, CloudTrail로 AWS API를 감사한다.
 - ArgoCD App-of-Apps 패턴으로 GitOps CD를 구축한다.
 
@@ -117,7 +118,7 @@ flowchart LR
     IAM
 
     VPC --> RDS
-    VPC --> K8s_EC2["K8s EC2<br/>(dev/staging)"]
+    VPC --> K8s_EC2["K8s EC2<br/>(staging)"]
     VPC --> EKS["EKS<br/>(prod)"]
 
     ECR --> K8s_EC2
@@ -132,9 +133,9 @@ flowchart LR
     S3 --> EKS
 ```
 
-배포 순서: IAM → VPC → S3 → Route 53 → ACM → SES → ECR → RDS → CloudTrail → K8s EC2 (dev/staging) 또는 EKS (prod) → DNS 레코드
+배포 순서: IAM → VPC → S3 → Route 53 → ACM → SES → ECR → RDS → CloudTrail → K8s EC2 (staging) 또는 EKS (prod) → DNS 레코드
 
-### 2. 모듈 설계 (활성 12개 + Bootstrap 1개)
+### 2. 모듈 설계 (활성 13개 + Bootstrap 1개)
 
 | # | 모듈 | 설명 | 상태 |
 |---|------|------|------|
@@ -147,8 +148,9 @@ flowchart LR
 | 6 | `ecr` | 컨테이너 이미지 레지스트리 | 활성 |
 | 7 | `rds` | MySQL 데이터베이스 | 활성 |
 | 8 | `cloudtrail` | 감사 로그 | 활성 |
-| 9 | `k8s_ec2` | kubeadm K8s 클러스터 (Dev/Staging: 1M+2W) | 활성 |
+| 9 | `k8s_ec2` | kubeadm K8s 클러스터 (Staging: 1M+2W) | 활성 |
 | 10 | `eks` | EKS Managed Node Group (Prod) | 활성 |
+| 11 | `stack` | Composition module — 9개 공통 모듈 캡슐화 | 활성 |
 | - | `tfstate` | Terraform 원격 상태 백엔드 | Bootstrap |
 
 > **레거시 모듈** (ec2, efs, lambda, api_gateway, cloudwatch, cloudfront, dynamodb, api_gateway_websocket, lambda_websocket, eventbridge): K8s 마이그레이션 전 서버리스 아키텍처용. 삭제 완료. git history에 보존.
@@ -157,7 +159,7 @@ flowchart LR
 
 ```text
 2-cho-community-infra/
-├── modules/                    # Terraform 모듈 (활성 12개 + Bootstrap 1개)
+├── modules/                    # Terraform 모듈 (활성 13개 + Bootstrap 1개)
 │   ├── iam/
 │   ├── vpc/
 │   ├── s3/
@@ -167,8 +169,9 @@ flowchart LR
 │   ├── ecr/
 │   ├── rds/
 │   ├── cloudtrail/
-│   ├── k8s_ec2/               # kubeadm K8s 클러스터 (dev/staging)
+│   ├── k8s_ec2/               # kubeadm K8s 클러스터 (staging)
 │   ├── eks/                   # EKS Managed Node Group (prod)
+│   ├── stack/                 # Composition module (9개 공통 모듈 캡슐화)
 │   └── tfstate/
 │
 ├── k8s/                        # K8s 매니페스트 (Kustomize base/overlay)
@@ -187,11 +190,6 @@ flowchart LR
 │   │   ├── network/            # NetworkPolicy (data namespace)
 │   │   └── storage/            # StorageClass
 │   ├── overlays/               # 환경별 패치 + 리소스
-│   │   ├── dev/
-│   │   │   ├── kustomization.yaml
-│   │   │   ├── configmap-patch.yaml, ingress-patch.yaml
-│   │   │   ├── mysql.yaml, cronjob-mysql-backup.yaml
-│   │   │   └── storage/       # PV/PVC (환경별 경로·용량)
 │   │   ├── staging/
 │   │   │   ├── kustomization.yaml
 │   │   │   ├── configmap-patch.yaml, ingress-patch.yaml
@@ -202,19 +200,18 @@ flowchart LR
 │   │       └── storage/       # Prometheus·Redis PV만 (uploads PV/PVC 미사용)
 │   ├── argocd/                 # ArgoCD 설정
 │   │   ├── install/            # Helm values, namespace, networkpolicy
-│   │   ├── projects/           # AppProject (dev/staging/prod)
+│   │   ├── projects/           # AppProject (staging/prod)
 │   │   ├── config/             # RBAC, notifications
-│   │   ├── app-of-apps/        # 환경별 Application (dev/staging/prod)
+│   │   ├── app-of-apps/        # 환경별 Application (staging/prod)
 │   │   └── root-app.yaml
 │   └── helm-values/            # Helm 차트 설정 (환경별)
 │       ├── cert-manager.yaml, ingress-nginx.yaml
 │       ├── mysql.yaml, redis.yaml, redis-prod.yaml, metrics-server.yaml
 │       ├── cluster-autoscaler.yaml, external-secrets.yaml
-│       └── kube-prometheus-stack-{dev,staging,prod}.yaml
+│       └── kube-prometheus-stack-{staging,prod}.yaml
 │
 ├── environments/               # 환경별 설정
 │   ├── bootstrap/              # 상태 백엔드 + OIDC 부트스트랩 (로컬 상태)
-│   ├── dev/
 │   ├── staging/
 │   └── prod/
 │
@@ -230,19 +227,17 @@ flowchart LR
 
 | 환경 | VPC CIDR | 퍼블릭 서브넷 | 프라이빗 서브넷 |
 |------|----------|---------------|-----------------|
-| Dev | `10.0.0.0/16` | `10.0.0.0/24`, `10.0.1.0/24` | `10.0.100.0/24`, `10.0.101.0/24` |
 | Staging | `10.1.0.0/16` | `10.1.0.0/24`, `10.1.1.0/24` | `10.1.100.0/24`, `10.1.101.0/24` |
 | Prod | `10.2.0.0/16` | `10.2.0.0/24`, `10.2.1.0/24` | `10.2.100.0/24`, `10.2.101.0/24` |
 
 - 가용 영역: `ap-northeast-2a`, `ap-northeast-2b` (2 AZ)
-- Dev/Staging: 퍼블릭 서브넷에 kubeadm 노드, 프라이빗 서브넷에 RDS
+- Staging: 퍼블릭 서브넷에 kubeadm 노드, 프라이빗 서브넷에 RDS
 - Prod: 프라이빗 서브넷에 EKS Worker 노드 + RDS, 퍼블릭 서브넷에 NLB + NAT Gateway
 
 #### NAT Gateway 전략
 
 | 환경 | NAT Gateway | 비용 | 장애 내성 |
 |------|-------------|------|-----------|
-| Dev | 1개 (단일) | ~$32/월 | AZ 단일 장애점 |
 | Staging | 1개 (단일) | ~$32/월 | AZ 단일 장애점 |
 | Prod | **AZ별 1개 (2개)** | ~$64/월 | AZ 장애 시에도 가용 |
 
@@ -259,7 +254,7 @@ flowchart TD
         EKS_AdditionalSG["EKS Additional SG<br/>(Terraform 관리)"]
     end
 
-    subgraph DevStaging["Dev/Staging (kubeadm)"]
+    subgraph DevStaging["Staging (kubeadm)"]
         K8sMaster["K8s Master SG<br/>API 6443 · etcd 2379-2380<br/>kubelet 10250-10252"]
         K8sWorker["K8s Worker SG<br/>HTTP 80 · HTTPS 443<br/>kubelet 10250"]
         K8sInternal["K8s Internal SG<br/>노드 간 전 포트 (Calico)"]
@@ -290,7 +285,7 @@ flowchart TD
 | EKS Additional SG | 사용자 정의 규칙 | Terraform 관리 |
 | RDS | TCP 3306 | EKS Cluster SG |
 
-**Dev/Staging (kubeadm) 보안 그룹:**
+**Staging (kubeadm) 보안 그룹:**
 
 | 보안 그룹 | 인바운드 | 소스 |
 |-----------|----------|------|
@@ -305,19 +300,19 @@ flowchart TD
 
 #### K8s 클러스터
 
-| 항목 | Dev (kubeadm) | Staging (kubeadm) | Prod (EKS) |
-|------|---------------|-------------------|------------|
-| 클러스터 유형 | kubeadm | kubeadm | **EKS Managed** |
-| Master/Control Plane | c7i-flex.large × **1** | c7i-flex.large × **1** | **AWS 관리형** |
-| Worker/Node Group | c7i-flex.large × 2 | c7i-flex.large × 2 | **t3.medium × 2~4 (ASG)** |
-| HAProxy | 없음 | 없음 | 없음 (NLB) |
-| API LB | Master 직접 접근 | Master 직접 접근 | **NLB (Internet-facing)** |
-| OS | Amazon Linux 2023 | Amazon Linux 2023 | EKS Optimized AMI |
-| CNI | Calico (직접 라우팅, ipipMode: Never) | Calico (직접 라우팅, ipipMode: Never) | **VPC CNI** |
-| Ingress | nginx (hostNetwork DaemonSet) | nginx | **Ingress-NGINX (LoadBalancer)** |
-| 인증서 | cert-manager + Let's Encrypt | cert-manager | cert-manager + Let's Encrypt |
-| 모니터링 | Prometheus + Grafana | Prometheus + Grafana | Prometheus + Grafana |
-| Cluster Autoscaler | 없음 | 없음 | **활성 (min 2, max 4)** |
+| 항목 | Staging (kubeadm) | Prod (EKS) |
+|------|-------------------|------------|
+| 클러스터 유형 | kubeadm | **EKS Managed** |
+| Master/Control Plane | c7i-flex.large × **1** | **AWS 관리형** |
+| Worker/Node Group | c7i-flex.large × 2 | **t3.medium × 2~4 (ASG)** |
+| HAProxy | 없음 | 없음 (NLB) |
+| API LB | Master 직접 접근 | **NLB (Internet-facing)** |
+| OS | Amazon Linux 2023 | EKS Optimized AMI |
+| CNI | Calico (직접 라우팅, ipipMode: Never) | **VPC CNI** |
+| Ingress | nginx | **Ingress-NGINX (LoadBalancer)** |
+| 인증서 | cert-manager | cert-manager + Let's Encrypt |
+| 모니터링 | Prometheus + Grafana | Prometheus + Grafana |
+| Cluster Autoscaler | 없음 | **활성 (min 2, max 4)** |
 
 #### K8s 워크로드
 
@@ -351,28 +346,27 @@ flowchart TD
 
 #### RDS (데이터베이스)
 
-| 설정 | Dev | Staging | Prod |
-|------|-----|---------|------|
-| 인스턴스 | `db.t3.micro` | `db.t3.micro` | `db.t3.medium` |
-| 초기 스토리지 | 20 GB | 20 GB | 50 GB |
-| 최대 스토리지 | 20 GB | 100 GB | 200 GB |
-| Multi-AZ | No | No | **Yes** |
-| 백업 보존 | 1일 | 1일 | **14일** |
-| 삭제 보호 | No | No | **Yes** |
+| 설정 | Staging | Prod |
+|------|---------|------|
+| 인스턴스 | `db.t3.micro` | `db.t3.medium` |
+| 초기 스토리지 | 20 GB | 50 GB |
+| 최대 스토리지 | 100 GB | 200 GB |
+| Multi-AZ | No | **Yes** |
+| 백업 보존 | 1일 | **14일** |
+| 삭제 보호 | No | **Yes** |
 
 #### 파일 업로드 스토리지
 
 모든 환경에서 S3를 사용합니다 (`STORAGE_BACKEND=s3`).
 
 - Prod: IRSA (IAM Roles for Service Accounts)로 S3 접근. `UPLOAD_DIR=""` (로컬 스토리지 없음)
-- Dev/Staging: K8s 노드 IAM 역할에 S3 업로드 권한 자동 부여
+- Staging: K8s 노드 IAM 역할에 S3 업로드 권한 자동 부여
 - S3 uploads 버킷에 버전 관리(versioning) 활성화 — 실수 삭제 시 이전 버전에서 복구 가능
 
 #### ECR (컨테이너 이미지)
 
 | 환경 | 이미지 보존 수 | 레포지토리 |
 |------|---------------|-----------|
-| Dev | 3개 | `backend-k8s`, `frontend-k8s` |
 | Staging | 10개 | `backend-k8s`, `frontend-k8s` |
 | Prod | 20개 | `backend-k8s`, `frontend-k8s` |
 
@@ -389,16 +383,16 @@ flowchart TD
 | `ws.my-community.shop` | A (Alias) | NLB | WebSocket (WS Pod) |
 | `argocd.my-community.shop` | A (Alias) | NLB | ArgoCD UI |
 
-**Dev/Staging (kubeadm):** A 레코드 → Worker 노드 퍼블릭 IP
+**Staging (kubeadm):** A 레코드 → Worker 노드 퍼블릭 IP
 
 | 레코드 | 설명 |
 |--------|------|
-| `dev.my-community.shop` 등 | 프론트엔드·API·WS (Worker IP 직접) |
+| `staging.my-community.shop` 등 | 프론트엔드·API·WS (Worker IP 직접) |
 | `grafana.k8s.my-community.shop` | Grafana 대시보드 |
 
 #### 인증서
 
-- Prod/Dev/Staging: cert-manager가 Let's Encrypt에서 TLS 인증서를 자동 발급·갱신
+- Prod/Staging: cert-manager가 Let's Encrypt에서 TLS 인증서를 자동 발급·갱신
 - Terraform ACM 모듈: 레거시 호환용으로 유지
 
 #### SES (이메일 발송)
@@ -415,7 +409,7 @@ flowchart TD
 - **관리자 그룹**: `AdministratorAccess` 정책 연결
 - **EKS IRSA**: S3 업로드용 ServiceAccount에 IAM 역할 바인딩 (Prod)
 - **Cluster Autoscaler IRSA**: `cluster-autoscaler` ServiceAccount에 ASG 조정 권한 바인딩
-- **K8s 노드 역할**: ECR Pull + S3 업로드 권한 (Dev/Staging)
+- **K8s 노드 역할**: ECR Pull + S3 업로드 권한 (Staging)
 - **부트스트랩 순서**: 최초 `terraform apply`는 루트 자격 증명 필수
 
 #### 민감 변수 관리
@@ -444,7 +438,7 @@ flowchart TD
 
 #### Terraform 상태 관리
 
-S3 + DynamoDB 원격 백엔드를 사용합니다. 단일 S3 버킷(`my-community-tfstate`)에 환경별 키(`dev/`, `staging/`, `prod/`)로 분리 저장합니다. 부트스트랩 환경은 로컬 상태를 영구 사용합니다 (OIDC provider 포함 — 절대 destroy 금지).
+S3 + DynamoDB 원격 백엔드를 사용합니다. 단일 S3 버킷(`my-community-tfstate`)에 환경별 키(`staging/`, `prod/`)로 분리 저장합니다. 부트스트랩 환경은 로컬 상태를 영구 사용합니다 (OIDC provider 포함 — 절대 destroy 금지).
 
 ### 7. 모니터링
 
@@ -483,7 +477,7 @@ terraform apply -var-file=terraform.tfvars
 #### Terraform 초기화 및 적용
 
 ```bash
-cd environments/prod   # 또는 dev, staging
+cd environments/prod   # 또는 staging
 terraform init
 terraform validate
 terraform plan -var-file=terraform.tfvars -var-file=secret.tfvars
@@ -509,7 +503,7 @@ helm install prometheus prometheus-community/kube-prometheus-stack -f k8s/helm-v
 kubectl apply -k k8s/overlays/prod/
 ```
 
-#### kubeadm 클러스터 초기화 (Dev/Staging)
+#### kubeadm 클러스터 초기화 (Staging)
 
 Terraform이 EC2를 생성하면 User Data 스크립트가 kubeadm, kubelet, Calico CNI를 자동 설치합니다. 이후 Master 노드에서 `kubeadm init`으로 클러스터를 초기화하고, Worker 노드를 조인합니다.
 
@@ -519,10 +513,10 @@ helm install cert-manager jetstack/cert-manager -f k8s/helm-values/cert-manager.
 helm install ingress-nginx ingress-nginx/ingress-nginx -f k8s/helm-values/ingress-nginx.yaml -n ingress-system
 helm install mysql bitnami/mysql -f k8s/helm-values/mysql.yaml -n data
 helm install redis bitnami/redis -f k8s/helm-values/redis.yaml -n data
-helm install prometheus prometheus-community/kube-prometheus-stack -f k8s/helm-values/kube-prometheus-stack.yaml -n monitoring
+helm install prometheus prometheus-community/kube-prometheus-stack -f k8s/helm-values/kube-prometheus-stack-staging.yaml -n monitoring
 
 # K8s 매니페스트 적용
-kubectl apply -k k8s/overlays/dev/
+kubectl apply -k k8s/overlays/staging/
 ```
 
 #### ArgoCD (GitOps CD)
@@ -581,25 +575,25 @@ kubectl run mysql-client --rm -it --image=mariadb:lts --restart=Never -n app -- 
 
 ## 환경별 설정 요약
 
-| 항목 | Dev | Staging | Prod |
-|------|-----|---------|------|
-| 클러스터 유형 | kubeadm (1M + 2W) | kubeadm (1M + 2W) | **EKS Managed Node Group** |
-| 노드 | c7i-flex.large × 3 | c7i-flex.large × 3 | **t3.medium × 2~4 (ASG)** |
-| 파일 스토리지 | S3 | S3 | S3 (IRSA) |
-| WebSocket | WS Pod + Redis | WS Pod + Redis | WS Pod + Redis Sentinel (3-node HA) |
-| Rate Limiter | Redis | Redis | Redis |
-| VPC CIDR | `10.0.0.0/16` | `10.1.0.0/16` | `10.2.0.0/16` |
-| NAT Gateway | 1개 | 1개 | AZ별 1개 (2개) |
-| RDS | `db.t3.micro` | `db.t3.micro` | `db.t3.medium` |
-| RDS Multi-AZ | No | No | **Yes** |
-| RDS 백업 보존 | 1일 | 1일 | **14일** |
-| ECR 이미지 보존 | 3개 | 10개 | 20개 |
-| 고가용성 | 없음 | 없음 | **PDB + TopologySpread + AntiAffinity + Cluster Autoscaler + Alertmanager + Redis Sentinel + ESO** |
-| 모니터링 | Prometheus + Grafana | Prometheus + Grafana | Prometheus + Grafana |
-| Kustomize overlay | `overlays/dev/` | `overlays/staging/` | `overlays/prod/` |
-| 삭제 보호 (RDS) | No | No | **Yes** |
+| 항목 | Staging | Prod |
+|------|---------|------|
+| 클러스터 유형 | kubeadm (1M + 2W) | **EKS Managed Node Group** |
+| 노드 | c7i-flex.large × 3 | **t3.medium × 2~4 (ASG)** |
+| 파일 스토리지 | S3 | S3 (IRSA) |
+| WebSocket | WS Pod + Redis | WS Pod + Redis Sentinel (3-node HA) |
+| Rate Limiter | Redis | Redis |
+| VPC CIDR | `10.1.0.0/16` | `10.2.0.0/16` |
+| NAT Gateway | 1개 | AZ별 1개 (2개) |
+| RDS | `db.t3.micro` | `db.t3.medium` |
+| RDS Multi-AZ | No | **Yes** |
+| RDS 백업 보존 | 1일 | **14일** |
+| ECR 이미지 보존 | 10개 | 20개 |
+| 고가용성 | 없음 | **PDB + TopologySpread + AntiAffinity + Cluster Autoscaler + Alertmanager + Redis Sentinel + ESO** |
+| 모니터링 | Prometheus + Grafana | Prometheus + Grafana |
+| Kustomize overlay | `overlays/staging/` | `overlays/prod/` |
+| 삭제 보호 (RDS) | No | **Yes** |
 
-> **배포 상태**: Prod 환경은 EKS에서 운영 중 (`my-community.shop`). Dev 환경은 kubeadm에서 운영 중. **Staging 환경은 kubeadm (1M+2W)에서 운영 중** (`staging.my-community.shop`, ArgoCD: `argocd-staging.my-community.shop`).
+> **배포 상태**: Prod 환경은 EKS에서 운영 중 (`my-community.shop`). **Staging 환경은 kubeadm (1M+2W)에서 운영 중** (`staging.my-community.shop`, ArgoCD: `argocd-staging.my-community.shop`). Dev 환경은 로컬 docker-compose로 전환됨 (클라우드 인프라 없음).
 
 ## 주의사항
 
@@ -609,9 +603,9 @@ kubectl run mysql-client --rm -it --image=mariadb:lts --restart=Never -n app -- 
 - **Terraform 모듈 제거 시 DNS 연쇄 삭제**: DNS 레코드를 관리하는 모듈 제거 시 해당 DNS도 삭제됨
 - **GitHub Actions `workflow_dispatch`**: 워크플로우 파일이 default branch에 존재해야 트리거 가능
 - **K8s metrics-server**: kubeadm 환경에서 `--kubelet-insecure-tls` 플래그 필수
-- **hostNetwork Ingress + NetworkPolicy**: `hostNetwork: true` Ingress는 노드 IP에서 트래픽 발생 → `ipBlock: 10.0.0.0/8`으로 멀티 VPC CIDR 허용 (dev/staging)
+- **hostNetwork Ingress + NetworkPolicy**: `hostNetwork: true` Ingress는 노드 IP에서 트래픽 발생 → `ipBlock: 10.0.0.0/8`으로 멀티 VPC CIDR 허용 (staging)
 - **EKS → RDS SG**: EKS Cluster SG(`eks describe-cluster --query cluster.resourcesVpcConfig.clusterSecurityGroupId`)를 RDS SG 인바운드에 추가 필요. Terraform eks 모듈이 생성한 SG와 다름
-- **환경 파일 동기화**: `main.tf`는 맹목적 복사 금지 — `backend.key`, 활성 모듈이 환경마다 다름 (prod는 eks, dev/staging은 k8s_ec2)
+- **환경 파일 동기화**: `main.tf`는 맹목적 복사 금지 — `backend.key`, 활성 모듈이 환경마다 다름 (prod는 eks, staging은 k8s_ec2)
 - **부트스트랩**: `environments/bootstrap/`은 영구 로컬 상태. OIDC provider 포함 — 절대 destroy 금지
 - **ArgoCD RBAC scopes**: 개인 GitHub 계정은 `groups` claim이 비어있음. `argocd-rbac-cm`에 `scopes: "[email, groups, preferred_username]"` 필수
 - **ArgoCD 설정 변경 시 클러스터 적용 필요**: helm-values/RBAC ConfigMap 변경 후 `helm upgrade` 또는 `kubectl apply` 수동 실행 필수. Git push만으로는 반영 안 됨

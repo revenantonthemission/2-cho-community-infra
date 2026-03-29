@@ -3,7 +3,7 @@
 #
 # nginx가 TLS 종료 → argocd-server는 HTTP(insecure) 모드
 # GitHub OAuth App을 통한 SSO (Dex 내장)
-# HA 비활성화 (dev 단일 마스터 환경)
+# HA 비활성화 (단일 인스턴스)
 
 global:
   domain: argocd.my-community.shop

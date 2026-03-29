@@ -15,7 +15,7 @@ patches:
 images:
 - name: community-backend
   newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-staging-backend-k8s
-  newTag: sha-ea70a85c
+  newTag: sha-80fa7e52
 - name: community-frontend
   newName: 559352512800.dkr.ecr.ap-northeast-2.amazonaws.com/my-community-staging-frontend-k8s
-  newTag: sha-f57fb11b
+  newTag: sha-a935a100

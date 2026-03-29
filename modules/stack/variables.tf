@@ -1,15 +1,10 @@
 ###############################################################################
-# Dev Environment - Variables
+# Stack Module - Variables (9개 공통 모듈의 입력 변수)
 ###############################################################################
 
 # =============================================================================
 # General
 # =============================================================================
-variable "aws_region" {
-  description = "AWS 리전"
-  type        = string
-}
-
 variable "project" {
   description = "프로젝트 이름"
   type        = string
@@ -18,6 +13,12 @@ variable "project" {
 variable "environment" {
   description = "환경 이름"
   type        = string
+}
+
+variable "tags" {
+  description = "공통 태그"
+  type        = map(string)
+  default     = {}
 }
 
 # =============================================================================
@@ -62,6 +63,17 @@ variable "cloudtrail_log_retention_days" {
   default     = 90
 }
 
+variable "create_uploads_bucket" {
+  description = "업로드 S3 버킷 생성 여부"
+  type        = bool
+  default     = true
+}
+
+variable "uploads_cors_origins" {
+  description = "업로드 S3 버킷 CORS 허용 오리진"
+  type        = list(string)
+}
+
 # =============================================================================
 # Route 53 + ACM
 # =============================================================================
@@ -75,6 +87,11 @@ variable "api_domain_name" {
   type        = string
 }
 
+variable "acm_subject_alternative_names" {
+  description = "ACM 인증서 SAN 목록"
+  type        = list(string)
+}
+
 # =============================================================================
 # ECR
 # =============================================================================
@@ -82,6 +99,12 @@ variable "ecr_image_retention_count" {
   description = "ECR 이미지 보존 수"
   type        = number
   default     = 10
+}
+
+variable "ecr_additional_repositories" {
+  description = "추가 ECR 레포지토리 이름 목록"
+  type        = list(string)
+  default     = []
 }
 
 # =============================================================================
@@ -150,25 +173,4 @@ variable "rds_deletion_protection" {
   description = "삭제 보호"
   type        = bool
   default     = false
-}
-
-# =============================================================================
-# K8s Cluster
-# =============================================================================
-variable "k8s_ssh_key_name" {
-  description = "K8s 노드 SSH Key Pair 이름"
-  type        = string
-  default     = ""
-}
-
-variable "k8s_allowed_ssh_cidrs" {
-  description = "K8s 노드 SSH 접근 허용 CIDR"
-  type        = list(string)
-  default     = []
-}
-
-variable "create_k8s_cluster" {
-  description = "K8s 클러스터 EC2 생성 여부"
-  type        = bool
-  default     = true
 }

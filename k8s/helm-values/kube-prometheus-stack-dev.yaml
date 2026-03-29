@@ -1,8 +1,0 @@
-grafana:
-  ingress:
-    hosts:
-      - grafana.k8s.my-community.shop
-    tls:
-      - secretName: grafana-tls
-        hosts:
-          - grafana.k8s.my-community.shop

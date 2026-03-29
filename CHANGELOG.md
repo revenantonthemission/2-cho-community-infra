@@ -2,6 +2,14 @@
 
 ## 2026-03 (Mar)
 
+- **03-25: 인프라 재구축 — Composition module (stack) 패턴 적용, dev 환경 로컬 전환**
+  - `modules/stack/` 신규 — 9개 공통 모듈 캡슐화
+  - `environments/dev/` 삭제 — 로컬 docker-compose로 전환
+  - K8s dev overlay, ArgoCD app, helm-values 삭제
+  - Prod: state surgery로 제로 다운타임 마이그레이션
+  - Staging: state empty (rebuild 대기)
+  - Bootstrap OIDC: dev IAM 역할 제거
+
 - **03-18: ArgoCD GitOps 통합**
   - ArgoCD Helm 설치 (argocd 네임스페이스, Dex GitHub SSO, nginx Ingress)
   - App-of-Apps 패턴: root-app → 환경별 Application CRD (dev/staging/prod)

@@ -38,7 +38,7 @@
 | **백엔드** | FastAPI (Python 3.13, aiomysql, 104개 API) · 모듈러 모놀리스 (`modules/` 9개 도메인 + `core/`) | 비동기 I/O, 자동 API 문서화, 도메인 기반 모듈 분리 | HPA 자동 스케일링, AZ 간 topology spread |
 | **데이터베이스** | MySQL 8.0.44 (RDS Multi-AZ, 31개 테이블) | FULLTEXT 검색(ngram), 트랜잭션 격리 | 관리형 자동 페일오버, 14일 백업 보존 |
 | **인증** | JWT (Access 30분 + Refresh 7일) | Stateless 인증, XSS 방어 | 토큰 저장소 DB 의존, CronJob 주기적 정리 |
-| **인프라** | AWS (Terraform 12개 모듈) + EKS (Prod) / kubeadm (Staging) | IaC 재현성, 관리형 컨트롤 플레인 (Prod) | Prod: EKS Managed Node Group, Staging: kubeadm 1M+2W, Dev: Docker Compose (로컬) |
+| **인프라** | AWS (Terraform 13개 모듈, stack composition) + EKS (Prod) / kubeadm (Staging) | IaC 재현성, 관리형 컨트롤 플레인 (Prod) | Prod: EKS Managed Node Group, Staging: kubeadm 1M+2W, Dev: Docker Compose (로컬) |
 | **CI/CD** | GitHub Actions + OIDC + ArgoCD | 장기 자격 증명 없는 배포, GitOps | ArgoCD App-of-Apps, 자동 sync (staging), 수동 sync (prod), promote.yml (staging→prod 승격) |
 | **모니터링** | Prometheus + Grafana + Alertmanager (kube-prometheus-stack) | K8s 네이티브 메트릭 수집 | ServiceMonitor 자동 수집, Alertmanager → Slack 알림 활성화 |
 | **파일 스토리지** | S3 (STORAGE_BACKEND=s3) | 99.999999999% 내구성, AZ 비종속 | PVC 제거로 Pod AZ 분산 제약 해소, 버전 관리 활성화 |
@@ -1062,7 +1062,7 @@ flowchart TD
 | **장애 알림 자동화** | Alertmanager → Slack 알림 (5개 규칙), 야간 장애 즉시 인지 가능 |
 | **GitOps CD** | ArgoCD App-of-Apps 패턴, OIDC 인증, Git revert 즉시 롤백 |
 | **Staging → Prod 프로모션** | 1회 빌드 → Staging 검증 → 승인 게이트 → Prod 승격. 동일 이미지 SHA로 환경 간 일관성 보장 |
-| **IaC 완전 관리** | Terraform 12개 모듈 + Kustomize overlay로 전체 인프라 코드화 |
+| **IaC 완전 관리** | Terraform 13개 모듈 (stack composition 포함) + Kustomize overlay로 전체 인프라 코드화 |
 | **PDB 보호** | 3개 Deployment에 PDB 적용, 유지보수 시 최소 가용성 보장 |
 | **Redis Sentinel HA** | Master 장애 시 Sentinel 자동 failover (~10초), WS/Rate Limiter 연속성 확보 |
 | **Secret 자동 관리** | AWS Secrets Manager 이력 관리 + ESO 자동 동기화, 수동 kubectl 작업 제거 |

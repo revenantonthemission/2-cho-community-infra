@@ -22,14 +22,6 @@ data:
     p, role:admin, projects, *, *, allow
     p, role:admin, logs, get, */*, allow
 
-    # dev-rw: dev/staging sync 가능, prod는 읽기만
-    p, role:dev-rw, applications, get, dev/*, allow
-    p, role:dev-rw, applications, sync, dev/*, allow
-    p, role:dev-rw, applications, get, staging/*, allow
-    p, role:dev-rw, applications, sync, staging/*, allow
-    p, role:dev-rw, applications, get, prod/*, allow
-    p, role:dev-rw, logs, get, */*, allow
-
     # readonly: 모든 Application 읽기 + 로그 조회
     p, role:readonly, applications, get, */*, allow
     p, role:readonly, logs, get, */*, allow

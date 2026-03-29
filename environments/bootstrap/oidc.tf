@@ -6,7 +6,7 @@
 #
 # 사용법:
 #   1. terraform apply (bootstrap 디렉토리에서 MFA 자격증명으로)
-#   2. 각 repo의 GitHub Settings > Environments에 dev/staging/prod 생성
+#   2. 각 repo의 GitHub Settings > Environments에 staging/prod 생성
 #   3. Repository variables에 AWS_ACCOUNT_ID 설정
 ###############################################################################
 
@@ -34,20 +34,12 @@ resource "aws_iam_openid_connect_provider" "github" {
 # =============================================================================
 
 locals {
-  environments = ["dev", "staging", "prod"]
+  environments = ["staging", "prod"]
 
   # 환경별 허용할 OIDC subject 목록
-  # dev/staging: fork + upstream 모두 배포 허용
+  # staging: fork + upstream 모두 배포 허용
   # prod: upstream(원본) repo에서만 배포 허용
   github_actions_subjects = {
-    dev = [
-      "repo:${var.github_fork_owner}/2-cho-community-be:environment:dev",
-      "repo:${var.github_fork_owner}/2-cho-community-fe:environment:dev",
-      "repo:${var.github_fork_owner}/2-cho-community-infra:environment:dev",
-      "repo:${var.github_upstream_owner}/2-cho-community-be:environment:dev",
-      "repo:${var.github_upstream_owner}/2-cho-community-fe:environment:dev",
-      "repo:${var.github_upstream_owner}/2-cho-community-infra:environment:dev",
-    ]
     staging = [
       "repo:${var.github_fork_owner}/2-cho-community-be:environment:staging",
       "repo:${var.github_fork_owner}/2-cho-community-fe:environment:staging",

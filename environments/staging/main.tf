@@ -34,155 +34,56 @@ provider "aws" {
 }
 
 # =============================================================================
-# Module 0: IAM (루트 계정 대신 사용할 사용자/그룹/정책)
+# Stack (공통 인프라: IAM + VPC + S3 + Route53 + ACM + SES + ECR + RDS + CloudTrail)
 # =============================================================================
-module "iam" {
-  source = "../../modules/iam"
+module "stack" {
+  source = "../../modules/stack"
 
   project     = var.project
   environment = var.environment
+  tags        = local.common_tags
 
+  # IAM
   admin_username       = var.admin_username
   create_deployer_role = var.create_deployer_role
 
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 1: VPC
-# =============================================================================
-module "vpc" {
-  source = "../../modules/vpc"
-
-  project     = var.project
-  environment = var.environment
-  vpc_cidr    = var.vpc_cidr
-  az_count    = var.az_count
-
+  # VPC
+  vpc_cidr           = var.vpc_cidr
+  az_count           = var.az_count
   single_nat_gateway = var.single_nat_gateway
 
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 2: S3 (uploads + CloudTrail logs)
-# =============================================================================
-module "s3" {
-  source = "../../modules/s3"
-
-  project     = var.project
-  environment = var.environment
-
+  # S3
   cloudtrail_log_retention_days = var.cloudtrail_log_retention_days
+  create_uploads_bucket         = true
+  uploads_cors_origins          = ["https://staging.my-community.shop"]
 
-  # 업로드 S3 버킷 (K8s 환경에서 사용)
-  create_uploads_bucket = true
-  uploads_cors_origins  = ["https://staging.my-community.shop"]
+  # Route53 + ACM
+  domain_name                   = var.domain_name
+  api_domain_name               = var.api_domain_name
+  acm_subject_alternative_names = ["staging.${var.domain_name}", "ws-staging.${var.domain_name}"]
 
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 3: Route 53 + ACM
-# =============================================================================
-module "route53" {
-  source = "../../modules/route53"
-
-  domain_name = var.domain_name
-}
-
-module "acm" {
-  source = "../../modules/acm"
-
-  project     = var.project
-  environment = var.environment
-
-  domain_name               = var.api_domain_name
-  subject_alternative_names = ["staging.${var.domain_name}", "ws-staging.${var.domain_name}"]
-  zone_id                   = module.route53.zone_id
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 3.5: SES (이메일 발송)
-# =============================================================================
-module "ses" {
-  source = "../../modules/ses"
-
-  project     = var.project
-  environment = var.environment
-
-  domain_name = var.domain_name
-  zone_id     = module.route53.zone_id
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 4: ECR
-# =============================================================================
-module "ecr" {
-  source = "../../modules/ecr"
-
-  project     = var.project
-  environment = var.environment
-
-  image_retention_count = var.ecr_image_retention_count
-
-  additional_repositories = [
+  # ECR
+  ecr_image_retention_count = var.ecr_image_retention_count
+  ecr_additional_repositories = [
     "${var.project}-${var.environment}-backend-k8s",
     "${var.project}-${var.environment}-frontend-k8s",
   ]
 
-  tags = local.common_tags
+  # RDS
+  rds_engine_version        = var.rds_engine_version
+  rds_instance_class        = var.rds_instance_class
+  rds_allocated_storage     = var.rds_allocated_storage
+  rds_max_allocated_storage = var.rds_max_allocated_storage
+  db_name                   = var.db_name
+  db_username               = var.db_username
+  db_password               = var.db_password
+  rds_multi_az              = var.rds_multi_az
+  rds_backup_retention_days = var.rds_backup_retention_days
+  rds_deletion_protection   = var.rds_deletion_protection
 }
 
 # =============================================================================
-# Module 5: RDS
-# =============================================================================
-module "rds" {
-  source = "../../modules/rds"
-
-  project     = var.project
-  environment = var.environment
-
-  private_subnet_ids    = module.vpc.private_subnet_ids
-  rds_security_group_id = module.vpc.rds_security_group_id
-
-  engine_version        = var.rds_engine_version
-  instance_class        = var.rds_instance_class
-  allocated_storage     = var.rds_allocated_storage
-  max_allocated_storage = var.rds_max_allocated_storage
-
-  db_name     = var.db_name
-  db_username = var.db_username
-  db_password = var.db_password
-
-  multi_az              = var.rds_multi_az
-  backup_retention_days = var.rds_backup_retention_days
-  deletion_protection   = var.rds_deletion_protection
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# Module 11: CloudTrail
-# =============================================================================
-module "cloudtrail" {
-  source = "../../modules/cloudtrail"
-
-  project     = var.project
-  environment = var.environment
-
-  cloudtrail_s3_bucket_id = module.s3.cloudtrail_logs_bucket_id
-  log_retention_days      = var.cloudtrail_log_retention_days
-
-  tags = local.common_tags
-}
-
-# =============================================================================
-# K8s Cluster (kubeadm on EC2) — HA: 3 Master + HAProxy
+# K8s Cluster (kubeadm on EC2) — staging 전용
 # =============================================================================
 module "k8s_ec2" {
   source = "../../modules/k8s_ec2"
@@ -191,9 +92,9 @@ module "k8s_ec2" {
   project     = var.project
   environment = var.environment
 
-  vpc_id = module.vpc.vpc_id
+  vpc_id = module.stack.vpc_id
   # c7i-flex.large는 ap-northeast-2a 미지원 → 2b 서브넷만 전달
-  public_subnet_ids = [module.vpc.public_subnet_ids[1]]
+  public_subnet_ids = [module.stack.public_subnet_ids[1]]
 
   master_count    = 1
   worker_count    = 2
@@ -203,7 +104,7 @@ module "k8s_ec2" {
   allowed_ssh_cidrs = var.k8s_allowed_ssh_cidrs
 
   enable_s3_uploads     = true
-  s3_uploads_bucket_arn = module.s3.uploads_bucket_arn
+  s3_uploads_bucket_arn = module.stack.uploads_bucket_arn
 
   tags = local.common_tags
 }
@@ -216,7 +117,7 @@ resource "aws_security_group_rule" "rds_from_k8s" {
   from_port                = 3306
   to_port                  = 3306
   protocol                 = "tcp"
-  security_group_id        = module.vpc.rds_security_group_id
+  security_group_id        = module.stack.rds_security_group_id
   source_security_group_id = module.k8s_ec2[0].k8s_internal_sg_id
   description              = "K8s nodes to RDS MySQL"
 }
@@ -231,7 +132,7 @@ resource "aws_route53_record" "k8s" {
     "argocd-staging",
   ]) : toset([])
 
-  zone_id = module.route53.zone_id
+  zone_id = module.stack.zone_id
   name    = "${each.key}.${var.domain_name}"
   type    = "A"
   ttl     = 300

@@ -51,17 +51,21 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: 8000
+            failureThreshold: 30
+            periodSeconds: 2
           readinessProbe:
             httpGet:
               path: /readyz
               port: 8000
-            initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /livez
               port: 8000
-            initialDelaySeconds: 15
             periodSeconds: 10
           # 롤링 배포 시 in-flight 요청 완료 대기
           lifecycle:
