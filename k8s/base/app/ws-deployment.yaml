@@ -34,7 +34,7 @@ spec:
       containers:
         - name: community-ws
           image: community-backend:latest
-          command: ["uv", "run", "uvicorn", "ws_app:app", "--host", "0.0.0.0", "--port", "8001"]
+          command: ["uvicorn", "ws_app:app", "--host", "0.0.0.0", "--port", "8001"]
           ports:
             - containerPort: 8001
           envFrom:
@@ -49,15 +49,24 @@ spec:
             limits:
               cpu: 250m
               memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            failureThreshold: 30
+            periodSeconds: 2
           readinessProbe:
             httpGet:
               path: /health
               port: 8001
-            initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
               port: 8001
-            initialDelaySeconds: 10
             periodSeconds: 10
+          # 롤링 배포 시 기존 WebSocket 연결 graceful drain
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
