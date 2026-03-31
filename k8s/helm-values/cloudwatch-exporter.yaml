@@ -1,0 +1,57 @@
+# CloudWatch Exporter — RDS MySQL 메트릭을 Prometheus로 수집
+# Helm chart: prometheus-community/prometheus-cloudwatch-exporter
+# Namespace: monitoring
+config: |-
+  region: ap-northeast-2
+  period_seconds: 300
+  set_timestamp: false
+  metrics:
+    - aws_namespace: AWS/RDS
+      aws_metric_name: CPUUtilization
+      aws_dimensions: [DBInstanceIdentifier]
+      aws_dimension_select:
+        DBInstanceIdentifier: ["my-community-prod-mysql"]
+      aws_statistics: [Average]
+    - aws_namespace: AWS/RDS
+      aws_metric_name: FreeStorageSpace
+      aws_dimensions: [DBInstanceIdentifier]
+      aws_dimension_select:
+        DBInstanceIdentifier: ["my-community-prod-mysql"]
+      aws_statistics: [Average]
+    - aws_namespace: AWS/RDS
+      aws_metric_name: DatabaseConnections
+      aws_dimensions: [DBInstanceIdentifier]
+      aws_dimension_select:
+        DBInstanceIdentifier: ["my-community-prod-mysql"]
+      aws_statistics: [Average]
+    - aws_namespace: AWS/RDS
+      aws_metric_name: ReadLatency
+      aws_dimensions: [DBInstanceIdentifier]
+      aws_dimension_select:
+        DBInstanceIdentifier: ["my-community-prod-mysql"]
+      aws_statistics: [Average]
+    - aws_namespace: AWS/RDS
+      aws_metric_name: WriteLatency
+      aws_dimensions: [DBInstanceIdentifier]
+      aws_dimension_select:
+        DBInstanceIdentifier: ["my-community-prod-mysql"]
+      aws_statistics: [Average]
+
+# Prometheus가 자동 수집하도록 ServiceMonitor 생성
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+
+# EKS IRSA — Terraform output 값으로 교체 필요
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 100m
+    memory: 256Mi
