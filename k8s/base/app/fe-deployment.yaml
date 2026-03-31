@@ -13,6 +13,14 @@ spec:
       labels:
         app: community-fe
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      automountServiceAccountToken: false
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -31,11 +39,30 @@ spec:
                 topologyKey: kubernetes.io/hostname
       imagePullSecrets:
         - name: ecr-cred
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: nginx-tmp
+          emptyDir: {}
       containers:
         - name: community-fe
           image: community-frontend:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
-            - containerPort: 80
+            - containerPort: 8080
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: nginx-tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 50m
@@ -46,16 +73,16 @@ spec:
           startupProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             failureThreshold: 15
             periodSeconds: 2
           readinessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             periodSeconds: 30

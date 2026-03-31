@@ -13,6 +13,13 @@ spec:
       labels:
         app: community-api
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       # AZ 간 균등 분배: 한쪽 AZ 장애 시에도 서비스 유지
       topologySpreadConstraints:
         - maxSkew: 1
@@ -34,9 +41,20 @@ spec:
       serviceAccountName: community-api
       imagePullSecrets:
         - name: ecr-cred
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: community-api
           image: community-backend:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           ports:
             - containerPort: 8000
           envFrom:
