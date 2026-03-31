@@ -354,3 +354,48 @@ resource "aws_iam_role_policy" "external_secrets" {
     }]
   })
 }
+
+# =============================================================================
+# CloudWatch Exporter IRSA
+# RDS CloudWatch 메트릭을 Prometheus로 수집하기 위한 읽기 전용 권한
+# =============================================================================
+resource "aws_iam_role" "cloudwatch_exporter" {
+  name = "${var.project}-${var.environment}-cloudwatch-exporter"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:monitoring:prometheus-cloudwatch-exporter"
+          "${replace(aws_eks_cluster.this.identity[0].oidc[0].issuer, "https://", "")}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "cloudwatch_exporter" {
+  name = "cloudwatch-readonly"
+  role = aws_iam_role.cloudwatch_exporter.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+      ]
+      Resource = "*"
+    }]
+  })
+}

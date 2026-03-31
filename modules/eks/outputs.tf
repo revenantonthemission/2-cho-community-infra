@@ -41,3 +41,8 @@ output "external_secrets_role_arn" {
 output "app_api_role_arn" {
   value = aws_iam_role.app_api.arn
 }
+
+output "cloudwatch_exporter_role_arn" {
+  description = "CloudWatch Exporter IRSA 역할 ARN"
+  value       = aws_iam_role.cloudwatch_exporter.arn
+}
