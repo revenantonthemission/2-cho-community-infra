@@ -29,3 +29,8 @@ variable "github_upstream_owner" {
   description = "GitHub upstream(원본) 소유자 (조직명)"
   type        = string
 }
+
+variable "account_id" {
+  description = "AWS 계정 ID"
+  type        = string
+}

@@ -35,6 +35,12 @@ module "tfstate" {
 
   project     = var.project
   environment = var.environment
+  account_id  = var.account_id
+
+  github_actions_role_arns = [
+    "arn:aws:iam::${var.account_id}:role/${var.project}-staging-github-actions",
+    "arn:aws:iam::${var.account_id}:role/${var.project}-prod-github-actions"
+  ]
 
   tags = local.common_tags
 }

@@ -23,13 +23,57 @@ resource "aws_s3_bucket_versioning" "tfstate" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# KMS Key — Terraform 상태 파일 암호화용 고객 관리 키 (CMK)
+# -----------------------------------------------------------------------------
+resource "aws_kms_key" "tfstate" {
+  description             = "Terraform state 파일 암호화용 CMK"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "RootAccountFullAccess"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${var.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "GitHubActionsEncryptDecrypt"
+        Effect    = "Allow"
+        Principal = { AWS = var.github_actions_role_arns }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${var.project}-tfstate-kms"
+  })
+}
+
+resource "aws_kms_alias" "tfstate" {
+  name          = "alias/${var.project}-tfstate"
+  target_key_id = aws_kms_key.tfstate.key_id
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
   bucket = aws_s3_bucket.tfstate.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.tfstate.arn
     }
+    bucket_key_enabled = true
   }
 }
 
