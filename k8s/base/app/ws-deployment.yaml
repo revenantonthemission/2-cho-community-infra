@@ -13,6 +13,14 @@ spec:
       labels:
         app: community-ws
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      automountServiceAccountToken: false
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -31,9 +39,20 @@ spec:
                 topologyKey: kubernetes.io/hostname
       imagePullSecrets:
         - name: ecr-cred
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: community-ws
           image: community-backend:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           command: ["uvicorn", "ws_app:app", "--host", "0.0.0.0", "--port", "8001"]
           ports:
             - containerPort: 8001

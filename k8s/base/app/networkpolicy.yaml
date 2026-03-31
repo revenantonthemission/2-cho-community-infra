@@ -13,6 +13,7 @@ spec:
       app: community-api
   policyTypes:
     - Ingress
+    - Egress
   ingress:
     - from:
         - namespaceSelector:
@@ -24,6 +25,36 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
+  egress:
+    # DNS (CoreDNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # RDS MySQL + HTTPS (AWS 서비스, OAuth) + SMTP (SES)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 3306
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 587
+    # Redis Sentinel (data 네임스페이스)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
 ---
 # WebSocket: Ingress(8001) ← ingress-nginx(hostNetwork) + 같은 namespace
 apiVersion: networking.k8s.io/v1
@@ -37,6 +68,7 @@ spec:
       app: community-ws
   policyTypes:
     - Ingress
+    - Egress
   ingress:
     - from:
         - namespaceSelector:
@@ -48,6 +80,36 @@ spec:
       ports:
         - protocol: TCP
           port: 8001
+  egress:
+    # DNS (CoreDNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # RDS MySQL + HTTPS (AWS 서비스, OAuth) + SMTP (SES)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 3306
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 587
+    # Redis Sentinel (data 네임스페이스)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: data
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
 ---
 # Frontend: Ingress(80) ← ingress-nginx(hostNetwork) + 같은 namespace
 # hostNetwork: true인 Ingress controller는 namespaceSelector로 매칭 안 됨
@@ -63,6 +125,7 @@ spec:
       app: community-fe
   policyTypes:
     - Ingress
+    - Egress
   ingress:
     - from:
         - namespaceSelector:
@@ -73,7 +136,16 @@ spec:
             cidr: 10.0.0.0/8
       ports:
         - protocol: TCP
-          port: 80
+          port: 8080
+  egress:
+    # DNS만 (nginx resolver)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
 ---
 # MySQL: Ingress(3306) ← app namespace + data namespace만
 apiVersion: networking.k8s.io/v1
