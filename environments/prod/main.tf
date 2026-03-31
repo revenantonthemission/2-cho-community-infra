@@ -18,6 +18,7 @@ terraform {
     region         = "ap-northeast-2"
     dynamodb_table = "terraform-locks"
     encrypt        = true
+    kms_key_id     = "alias/my-community-tfstate"
   }
 }
 
