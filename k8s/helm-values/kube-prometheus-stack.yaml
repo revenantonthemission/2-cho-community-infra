@@ -132,6 +132,24 @@ additionalPrometheusRulesMap:
             annotations:
               summary: "API 5xx 에러율 {{ $value | printf \"%.1f\" }}%"
               description: "5분간 5xx 에러율 5% 초과 — 배포 롤백 또는 DB 상태 확인 필요"
+      - name: cronjob-alerts
+        rules:
+          - alert: CronJobFailed
+            expr: kube_job_status_failed{namespace="app"} > 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CronJob {{ $labels.job_name }} 실패"
+              description: "네임스페이스 {{ $labels.namespace }}의 Job {{ $labels.job_name }}이 실패 상태"
+          - alert: CronJobNotScheduled
+            expr: time() - kube_cronjob_next_schedule_time{namespace="app"} > 3600
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "CronJob {{ $labels.cronjob }} 스케줄 지연"
+              description: "예정 시간보다 1시간 이상 지연 — 스케줄러 또는 리소스 문제 확인"
 
 nodeExporter:
   resources:
