@@ -311,7 +311,7 @@ flowchart TD
 | CNI | Calico (직접 라우팅, ipipMode: Never) | **VPC CNI** |
 | Ingress | nginx | **Ingress-NGINX (LoadBalancer)** |
 | 인증서 | cert-manager | cert-manager + Let's Encrypt |
-| 모니터링 | Prometheus + Grafana | Prometheus + Grafana |
+| 모니터링 | Prometheus + Grafana | Prometheus + Grafana + CloudWatch Exporter |
 | Cluster Autoscaler | 없음 | **활성 (min 2, max 4)** |
 
 #### K8s 워크로드
@@ -448,8 +448,14 @@ S3 + DynamoDB 원격 백엔드를 사용합니다. 단일 S3 버킷(`my-communit
 - **metrics-server**: HPA 자동 스케일링 메트릭
 - **ServiceMonitor**: FastAPI 앱의 Prometheus 메트릭 자동 수집
 - **Alertmanager**: Slack webhook 연동으로 알림 전송
-  - 알림 규칙: PodCrashLooping, PodPending, NodeCPUHigh, NodeMemoryHigh, APIHighErrorRate
+  - 알림 규칙: PodCrashLooping, PodPending, NodeCPUHigh, NodeMemoryHigh, APIHighErrorRate, RDSCPUHigh, RDSStorageLow, RDSConnectionsHigh
   - Slack webhook URL은 K8s Secret(`slack-webhook`)으로 관리
+
+#### CloudWatch Exporter (AWS → Prometheus)
+
+- **설치**: prometheus-cloudwatch-exporter Helm 차트
+- **인증**: IRSA (IAM Roles for Service Accounts)
+- **용도**: AWS CloudWatch 메트릭을 Prometheus로 수집 (RDS, EC2 등)
 
 #### 부하 테스트 검증 (Prod)
 
@@ -589,7 +595,7 @@ kubectl run mysql-client --rm -it --image=mariadb:lts --restart=Never -n app -- 
 | RDS 백업 보존 | 1일 | **14일** |
 | ECR 이미지 보존 | 10개 | 20개 |
 | 고가용성 | 없음 | **PDB + TopologySpread + AntiAffinity + Cluster Autoscaler + Alertmanager + Redis Sentinel + ESO** |
-| 모니터링 | Prometheus + Grafana | Prometheus + Grafana |
+| 모니터링 | Prometheus + Grafana | Prometheus + Grafana + CloudWatch Exporter |
 | Kustomize overlay | `overlays/staging/` | `overlays/prod/` |
 | 삭제 보호 (RDS) | No | **Yes** |
 

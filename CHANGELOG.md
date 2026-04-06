@@ -2,6 +2,22 @@
 
 ## 2026-03 (Mar)
 
+- **03-31: 인프라 옵저버빌리티 강화** (PR #6)
+  - feat: CloudWatch Exporter IRSA 역할 추가
+  - feat: CloudWatch Exporter Helm values 추가
+  - feat: RDS 알림 규칙 추가 (CPU, Storage, Connections)
+  - feat: Prometheus storageSpec 활성화 (local-storage)
+
+- **03-31: 보안 강화** (PR #4, #5)
+  - feat: Terraform state S3 버킷 KMS 암호화 전환
+  - feat: Terraform backend에 KMS kms_key_id 추가
+  - feat: Terraform dispatch job plan/apply 분리
+  - feat: K8s Deployment securityContext 추가
+  - feat: NetworkPolicy Egress 규칙 추가
+
+- **03-29: 라이프사이클 개선**
+  - fix: Lifecycle 수정
+
 - **03-25: 인프라 재구축 — Composition module (stack) 패턴 적용, dev 환경 로컬 전환**
   - `modules/stack/` 신규 — 9개 공통 모듈 캡슐화
   - `environments/dev/` 삭제 — 로컬 docker-compose로 전환
